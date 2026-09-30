@@ -62,12 +62,19 @@ def _kv(texto):
 
 def t_search(query):
     r = run(["xbps-query", "-Rs", query], timeout=60)
-    itens = []
+    itens, vistos = [], {}
     for linha in r["out"].splitlines():
         m = re.match(r"^\[(.)\]\s+(\S+)\s+(.*)$", linha)
         if m:
-            itens.append({"installed": m.group(1) == "*", "pkgver": m.group(2),
-                          "name": _nome(m.group(2)), "desc": m.group(3).strip()})
+            nome = _nome(m.group(2))
+            instalado = m.group(1) == "*"
+            if nome in vistos:
+                # o mesmo pacote em outro repositório: fica uma linha só
+                vistos[nome]["installed"] = vistos[nome]["installed"] or instalado
+                continue
+            vistos[nome] = {"installed": instalado, "pkgver": m.group(2),
+                            "name": nome, "desc": m.group(3).strip()}
+            itens.append(vistos[nome])
     res = {"query": query, "results": itens[:40], "total": len(itens)}
     if r["rc"] not in (0, 2) and not itens:
         res["error"] = (r["err"] or r["out"]).strip()[:300] or "xbps-query falhou"

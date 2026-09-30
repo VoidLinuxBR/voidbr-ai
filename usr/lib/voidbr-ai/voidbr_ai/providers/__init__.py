@@ -30,7 +30,7 @@ class Provider:
 
     def available(self):
         """(ok, mensagem) — checagem rápida, sem gerar texto."""
-        return False, "nenhum provider configurado"
+        return False, self.cfg.get("_motivo") or "nenhum provider configurado"
 
     def chat(self, messages):
         """Recebe [{role, content}] e devolve o texto da resposta (JSON)."""
@@ -88,8 +88,32 @@ def strip_thinking(texto):
     return re.sub(r"<think>.*?</think>", "", texto or "", flags=re.S).strip()
 
 
+def detect_ollama(cfg):
+    """provider = "auto": usa o Ollama local se ele responder e tiver modelo.
+
+    Devolve o provider pronto ou um Provider vazio com o motivo (para a mensagem)."""
+    import shutil
+    from .ollama import Ollama
+    o = cfg.get("ollama", {})
+    try:
+        nomes = Ollama(o).models(timeout=1)
+    except ProviderError:
+        if shutil.which("ollama"):
+            return Provider({"_motivo": "Ollama instalado, mas o serviço não responde "
+                                        "(sudo sv status ollama; ou voidbr-ai --setup-ai)"})
+        return Provider({})
+    if not nomes:
+        return Provider({"_motivo": "Ollama rodando, mas sem nenhum modelo baixado "
+                                    "(voidbr-ai --setup-ai baixa um)"})
+    m = o.get("model", "")
+    escolhido = m if (m in nomes or f"{m}:latest" in nomes) else nomes[0]
+    return Ollama({**o, "model": escolhido})
+
+
 def get_provider(cfg):
     nome = (cfg.get("provider") or "none").lower()
+    if nome == "auto":
+        return detect_ollama(cfg)
     if nome == "ollama":
         from .ollama import Ollama
         return Ollama(cfg.get("ollama", {}))

@@ -221,7 +221,7 @@ class Agent:
 
     def llm_status(self):
         if self.provider.name == "none":
-            return False, "sem IA configurada (só regras)"
+            return False, self.provider.cfg.get("_motivo") or "sem IA configurada (só regras)"
         return self.provider.available()
 
     def reset(self):

@@ -3,9 +3,11 @@
 # O usuário pode sobrescrever qualquer valor em ~/.config/voidbr-ai/config.toml
 # (a GUI grava lá pelo menu ☰ → Configurações).
 #
-# O LLM é opcional: com provider = "none" o diagnóstico funciona só pelas regras.
+# A IA é opcional: sem ela (ou com provider = "none") o check-up e os diagnósticos
+# prontos funcionam só pelas regras.
 
-provider = "none"            # none | ollama | openai
+provider = "auto"            # auto | none | ollama | openai
+                             # auto: usa o Ollama local se estiver rodando com um modelo baixado
 
 [ollama]
 url = "http://127.0.0.1:11434"

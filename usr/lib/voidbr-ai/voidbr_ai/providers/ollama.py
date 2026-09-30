@@ -26,8 +26,8 @@ class Ollama(Provider):
     def url(self):
         return self.cfg.get("url", "http://127.0.0.1:11434").rstrip("/")
 
-    def models(self):
-        dados = http_json(f"{self.url}/api/tags", timeout=3)
+    def models(self, timeout=3):
+        dados = http_json(f"{self.url}/api/tags", timeout=timeout)
         return [m.get("name", "") for m in dados.get("models", [])]
 
     def available(self):

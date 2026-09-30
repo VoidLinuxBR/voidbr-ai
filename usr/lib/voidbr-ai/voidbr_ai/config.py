@@ -24,7 +24,8 @@ import tomllib
 GLOBAL_CONFIG = "/etc/voidbr-ai/config.toml"
 
 DEFAULTS = {
-    "provider": "none",              # none | ollama | openai
+    "provider": "auto",              # auto | none | ollama | openai
+                                     # auto = usa o Ollama local se estiver rodando com modelo
     "ollama": {
         "url": "http://127.0.0.1:11434",
         "model": "qwen3:4b",

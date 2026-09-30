@@ -49,7 +49,8 @@ from ..agent import Agent  # noqa: E402
 
 APP_ID = "br.voidbr.ai"
 
-PROVIDERS = [("Nenhum (só regras)", "none"), ("Ollama (local)", "ollama"),
+PROVIDERS = [("Automático (Ollama local, se houver)", "auto"), ("Nenhum (só regras)", "none"),
+             ("Ollama (local)", "ollama"),
              ("OpenAI / compatível", "openai")]
 
 ICONE_PASSO = {"ok": "✅", "warn": "⚠️", "fail": "❌", "info": "•", "running": "⏳"}
@@ -430,7 +431,7 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             chips.append(b)
         c.append(chips)
         self.conversa.append(c)
-        if self.cfg.get("provider", "none") == "none" and not self.cfg.get("gui", {}).get("ai_setup"):
+        if self.agent.provider.name == "none" and not self.cfg.get("gui", {}).get("ai_setup"):
             self.cartao_config_ia()
 
     def cartao_config_ia(self):
@@ -872,7 +873,7 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         def ao_mudar(*_):
             p = codigos[lista.get_selected()]
             for w in (o_url, o_mod):
-                w.set_sensitive(p == "ollama")
+                w.set_sensitive(p in ("ollama", "auto"))
             for w in (a_url, a_mod, a_env):
                 w.set_sensitive(p == "openai")
         lista.connect("notify::selected", ao_mudar)
@@ -904,7 +905,7 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             self.cfg = config.load()
             self.agent = Agent(self.cfg)
             self.atualizar_status()
-            if getattr(self, "_cartao_ia", None) and self.cfg.get("provider") != "none":
+            if getattr(self, "_cartao_ia", None) and self.agent.provider.name != "none":
                 self._cartao_ia.set_visible(False)
             history.log.info("configuração salva em %s", path)
         salvar.connect("clicked", ao_salvar)
