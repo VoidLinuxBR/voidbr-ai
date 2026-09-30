@@ -1,12 +1,9 @@
 # Maintainer: Vilmar Catafesta <vcatafesta@gmail.com>
 
-pkgname=voidbr-pkgname
-pkgdesc="Package template for VoidLinuxBR"
+pkgname=voidbr-ai
+pkgdesc="VoidBR AI - assistente do sistema: investiga a máquina real, explica e corrige com confirmação (GTK4 + CLI)"
 pkgver=$(date +%Y%m%d)
 pkgrel=$(date +%H%M)
-provides=()               # "eu SOU o $pkgname pkg1, pra quem depender deles"
-replaces=()               # "remove o pkg1 pkg2 antigo automaticamente quando eu instalar"
-conflicts=()              # "nunca me deixe coexistir com o pkg1 pkg2 original"
 arch=('any')
 license=('MIT')
 #url="ssh://git@github.com/voidlinuxbr/${pkgname}"
@@ -14,24 +11,34 @@ url="https://github.com/voidlinuxbr/${pkgname}"
 source=("git+${url}.git")
 md5sums=('SKIP')
 makedepends=()
-depends=()
-backup=()
+depends=(
+	'python3'         # >= 3.11 (tomllib)
+	'python3-gobject' # GUI
+	'gtk4'            # GUI (Gtk.AlertDialog: GTK >= 4.10)
+	'polkit'          # pkexec para as ações confirmadas
+	'iproute2'        # ip -j link/addr/route
+	'iputils'         # ping
+	'iw'              # estado do Wi-Fi
+)
+# opcionais (detectados em tempo de execução, não são dependência):
+#   voidbr-ollama   -> IA local (o assistente instala: voidbr-ai --setup-ai)
+#   NetworkManager / iwd / connman / dhcpcd / wpa_supplicant, pipewire/wireplumber,
+#   bluez, socklog-void -> o que o usuário usar
+# já fazem parte do base-system do Void: pciutils (lspci), usbutils (lsusb),
+#   base-files (vkpurge), xbps
 
-# Automatically detect and use the correct install file
-if [ -e "${pkgname}.install" ]; then
-	install=${pkgname}.install
-elif [ -e "pkgbuild.install" ]; then
-	install=pkgfile.install
-fi
+backup=(
+	'/etc/voidbr-ai/config.toml'
+)
 
 package() {
 	# Verify default folder
-  if [ -d "${srcdir}/${pkgname}/${pkgname}" ]; then
+	if [ -d "${srcdir}/${pkgname}/${pkgname}" ]; then
 		InternalDir="${srcdir}/${pkgname}/${pkgname}"
-  elif [ -d "${srcdir}/${pkgname}" ]; then
+	elif [ -d "${srcdir}/${pkgname}" ]; then
 		InternalDir="${srcdir}/${pkgname}"
 	else
-    #local
+		#local
 		InternalDir="${WORKDIR}"
 	fi
 
@@ -43,6 +50,14 @@ package() {
 			cp -a "${InternalDir}/${dir}" "${pkgdir}/"
 		fi
 	done
+
+	# executáveis (o git pode não preservar o bit +x em todos os fluxos)
+	chmod 755 "${pkgdir}/usr/bin/voidbr-ai" \
+		"${pkgdir}/usr/bin/voidbr-ai-gui" \
+		"${pkgdir}/usr/lib/voidbr-ai/voidbr-ai-helper"
+
+	# sem bytecode/caches do repositório
+	find "${pkgdir}/usr/lib/voidbr-ai" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 	# Install license file if present
 	if [ -f "LICENSE" ]; then
@@ -61,6 +76,12 @@ pre_install() {
 
 post_install() {
 	log "Finalizando instalação"
+	echo "==> voidbr-ai instalado."
+	echo "    Interface gráfica: voidbr-ai-gui"
+	echo "    Terminal:          voidbr-ai \"sua pergunta\"  |  voidbr-ai --checkup"
+	echo "    IA local:          voidbr-ai --setup-ai  (ou ☰ → Configurar IA local)"
+	echo "    As correções rodam via pkexec: tenha um agente polkit rodando"
+	echo "    (no Hyprland, ex: hyprpolkitagent)."
 }
 
 pre_upgrade() {

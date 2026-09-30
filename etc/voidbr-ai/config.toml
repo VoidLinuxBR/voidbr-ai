@@ -1,0 +1,49 @@
+# VoidBR AI - configuração global
+#
+# O usuário pode sobrescrever qualquer valor em ~/.config/voidbr-ai/config.toml
+# (a GUI grava lá pelo menu ☰ → Configurações).
+#
+# O LLM é opcional: com provider = "none" o diagnóstico funciona só pelas regras.
+
+provider = "none"            # none | ollama | openai
+
+[ollama]
+url = "http://127.0.0.1:11434"
+model = "qwen3:4b"
+timeout = 180
+num_ctx = 16384              # contexto; o catálogo de ferramentas ocupa ~3k tokens
+think = false                # qwen3 sem o modo "pensando" (bem mais rápido)
+
+[openai]
+# qualquer API compatível com /chat/completions (OpenAI, llama.cpp, vLLM, LM Studio...)
+url = "https://api.openai.com/v1"
+model = ""
+# a chave NUNCA fica neste arquivo: vem desta variável de ambiente...
+api_key_env = "OPENAI_API_KEY"
+# ...ou de um arquivo (chmod 600), ex: "~/.config/voidbr-ai/openai.key"
+api_key_file = ""
+timeout = 90
+
+[network]
+ping_targets = ["1.1.1.1", "8.8.8.8"]
+dns_test_hosts = ["voidbr.org", "voidlinux.org"]
+ping_timeout = 2
+dns_timeout = 5
+
+[agent]
+# quantas consultas ao sistema a IA pode fazer antes de responder
+max_steps = 8
+# depois de uma correção, refaz o diagnóstico até o problema sumir
+verify_attempts = 4
+verify_interval = 4
+
+[tools]
+# ferramentas desativadas, ex: ["network.connectivity"]
+disabled = []
+
+[gui]
+width = 900
+height = 740
+
+[log]
+level = "info"               # debug | info | warning | error

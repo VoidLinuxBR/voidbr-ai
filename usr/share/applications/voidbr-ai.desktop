@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=VoidBR AI
+GenericName=Assistente do sistema
+Comment=Ajuda com o sistema: investiga, explica e corrige com a sua confirmação
+Exec=voidbr-ai-gui
+Icon=help-browser
+Terminal=false
+Categories=System;X-VoidBR-Apps;
+Keywords=ai;ia;assistente;ajuda;diagnóstico;checkup;rede;wifi;disco;pacotes;áudio;som;bluetooth;serviços;
+StartupNotify=true

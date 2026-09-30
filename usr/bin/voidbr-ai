@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+#   voidbr-ai - VoidBR AI (CLI)
+#   Created: ter 29 set 2026 23:00:00 -04
+#
+#   Copyright (c) 2026, Vilmar Catafesta <vcatafesta@gmail.com>
+#   Assembled By Vilmar Catafesta for the VoidBR project.
+#   Licença: MIT
+#
+#   ChangeLog:
+#   - v0.2.0 (2026-09-30): Ajuda geral: a IA investiga o sistema com um catálogo
+#     de ferramentas de leitura (tool calling do Ollama/OpenAI) e propõe ações da
+#     lista branca. Novos domínios: disco, pacotes, serviços, áudio, Bluetooth,
+#     memória/CPU; check-up geral sem IA; instalar/remover pacotes, atualizar,
+#     limpar cache, kernels antigos; assistente da IA local (voidbr-ollama).
+#   - v0.1.0 (2026-09-29): Versão inicial — Agent, Tool Registry, contexto do
+#     sistema, diagnóstico de rede (runit), providers Ollama/OpenAI,
+#     ações confirmadas via pkexec + verificação.
+#
+import os
+import sys
+
+# instalado: /usr/lib/voidbr-ai ; no repositório: ../lib/voidbr-ai
+_base = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "voidbr-ai")
+sys.path.insert(0, os.path.normpath(_base) if os.path.isdir(_base) else "/usr/lib/voidbr-ai")
+
+from voidbr_ai.cli.main import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

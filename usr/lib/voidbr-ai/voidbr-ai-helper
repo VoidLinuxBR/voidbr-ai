@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+#
+#   voidbr-ai-helper - ações privilegiadas do VoidBR AI (lista branca)
+#   Created: ter 29 set 2026 23:00:00 -04
+#   Updated: qua 30 set 2026 08:00:00 -04
+#
+#   Copyright (c) 2026, Vilmar Catafesta <vcatafesta@gmail.com>
+#   Assembled By Vilmar Catafesta for the VoidBR project.
+#   Licença: MIT
+#
+#   Chamado pelo VoidBR AI via pkexec (polkit: org.voidbr.ai.helper).
+#   NÃO é um shell: só aceita os verbos abaixo e valida cada argumento.
+#   O LLM nunca chega aqui diretamente; só depois que o usuário confirma.
+#
+#   Verbos:
+#     service-start|stop|restart NOME   sv start|stop|restart NOME
+#     service-enable  NOME              ln -s /etc/sv/NOME /var/service/ && sv start NOME
+#     service-disable NOME              sv stop NOME && rm /var/service/NOME
+#     service-status  NOME              sv status NOME (só leitura, para verificar)
+#     link-up         IFACE             ip link set IFACE up
+#     rfkill-unblock  wlan|bluetooth    desbloqueia (software) os rádios do tipo
+#     nm-networking-on                  nmcli networking on
+#     nm-wifi-on                        nmcli radio wifi on
+#     pkg-install     PACOTE...         xbps-install -Sy PACOTE...
+#     pkg-remove      PACOTE...         xbps-remove -y PACOTE...
+#     system-update                     xbps-install -Syu xbps && xbps-install -yu
+#     pkg-clean-cache                   xbps-remove -yO
+#     pkg-remove-orphans                xbps-remove -yo
+#     kernel-purge                      vkpurge rm all
+#     pipewire-conf   wireplumber|pulse ln -s <exemplo do Void> /etc/pipewire/pipewire.conf.d/
+#
+#   ChangeLog:
+#   - 2026-09-30: qualquer serviço de /etc/sv; pacotes (instalar, remover,
+#     atualizar, limpar cache, órfãos); kernels antigos; rfkill bluetooth.
+#
+
+set -uo pipefail
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export LC_ALL=C
+
+readonly sv_dir="/etc/sv"
+readonly service_dir="/var/service"
+
+# pacotes que nunca são removidos por aqui
+readonly protected_pkgs=(base-system base-files base-container base-minimal xbps voidbr-xbps
+	runit runit-void glibc musl linux linux-base bash coreutils shadow sudo util-linux
+	eudev dbus polkit voidbr-ai)
+
+red='\e[1;31m'
+green='\e[1;32m'
+reset='\e[0m'
+[[ -t 1 ]] || { red=''; green=''; reset=''; }
+
+die() { printf '%bERRO:%b %s\n' "$red" "$reset" "$*" >&2; exit 1; }
+ok()  { printf '%bOK:%b %s\n' "$green" "$reset" "$*"; }
+
+[[ $EUID -eq 0 ]] || die "precisa rodar como root (via pkexec)"
+
+need_service() {
+	[[ -n ${1:-} ]] || die "informe o serviço"
+	[[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}$ ]] || die "nome de serviço inválido: $1"
+	[[ -d $sv_dir/$1 ]] || die "serviço não instalado: $sv_dir/$1 não existe"
+}
+
+valid_iface() {
+	[[ $1 =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] && [[ -e /sys/class/net/$1 ]]
+}
+
+need_pkgs() {
+	(($# > 0)) || die "informe ao menos um pacote"
+	(($# <= 20)) || die "no máximo 20 pacotes por vez"
+	local p
+	for p in "$@"; do
+		[[ $p =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$ ]] || die "nome de pacote inválido: $p"
+	done
+}
+
+# o runsvdir leva alguns segundos para assumir um serviço recém-habilitado
+wait_supervise() {
+	local i
+	for ((i = 0; i < 20; i++)); do
+		[[ -e $service_dir/$1/supervise/ok ]] && return 0
+		sleep 0.5
+	done
+	return 1
+}
+
+verb=${1:-}
+shift || true
+
+case $verb in
+service-start | service-stop | service-restart)
+	need_service "${1:-}"
+	[[ -e $service_dir/$1 ]] || die "$1 não está habilitado em $service_dir"
+	sv "${verb#service-}" "$service_dir/$1" || die "sv ${verb#service-} $1 falhou"
+	ok "sv ${verb#service-} $1"
+	;;
+service-status)
+	need_service "${1:-}"
+	[[ -e $service_dir/$1 ]] || { echo "disabled: $1"; exit 0; }
+	sv status "$service_dir/$1"
+	;;
+service-enable)
+	need_service "${1:-}"
+	if [[ ! -e $service_dir/$1 ]]; then
+		ln -s "$sv_dir/$1" "$service_dir/" || die "não foi possível habilitar $1"
+		ok "habilitado: $service_dir/$1 -> $sv_dir/$1"
+	fi
+	wait_supervise "$1" || die "o runsvdir não assumiu $1 (runsvdir rodando?)"
+	sv start "$service_dir/$1" || die "sv start $1 falhou"
+	ok "sv start $1"
+	;;
+service-disable)
+	need_service "${1:-}"
+	[[ -L $service_dir/$1 ]] || die "$1 não está habilitado (ou não é um link) em $service_dir"
+	sv stop "$service_dir/$1" || true
+	rm -f "$service_dir/$1" || die "não foi possível remover $service_dir/$1"
+	ok "desabilitado: $1 (para voltar: ln -s $sv_dir/$1 $service_dir/)"
+	;;
+link-up)
+	valid_iface "${1:-}" || die "interface inválida: ${1:-}"
+	ip link set "$1" up || die "ip link set $1 up falhou"
+	ok "ip link set $1 up"
+	;;
+rfkill-unblock)
+	[[ ${1:-} == wlan || ${1:-} == bluetooth ]] || die "tipo inválido: ${1:-} (wlan|bluetooth)"
+	found=0
+	for d in /sys/class/rfkill/rfkill*; do
+		[[ -r $d/type && $(<"$d/type") == "$1" ]] || continue
+		found=1
+		echo 0 >"$d/soft" || die "não foi possível desbloquear $(<"$d/name")"
+		ok "desbloqueado: $(<"$d/name")"
+	done
+	((found)) || die "nenhum rádio $1 em /sys/class/rfkill"
+	;;
+nm-networking-on)
+	nmcli networking on || die "nmcli networking on falhou"
+	ok "nmcli networking on"
+	;;
+nm-wifi-on)
+	nmcli radio wifi on || die "nmcli radio wifi on falhou"
+	ok "nmcli radio wifi on"
+	;;
+pkg-install)
+	need_pkgs "$@"
+	xbps-install -Sy -- "$@" || die "xbps-install falhou"
+	ok "instalado: $*"
+	;;
+pkg-remove)
+	need_pkgs "$@"
+	for p in "$@"; do
+		for q in "${protected_pkgs[@]}"; do
+			[[ $p == "$q" ]] && die "o pacote $p é essencial e não pode ser removido por aqui"
+		done
+	done
+	xbps-remove -y -- "$@" || die "xbps-remove falhou (algum pacote instalado depende deles?)"
+	ok "removido: $*"
+	;;
+system-update)
+	# o próprio xbps precisa ser atualizado antes do resto
+	xbps-install -Sy -u xbps || die "falha ao sincronizar/atualizar o xbps"
+	xbps-install -yu || die "xbps-install -u falhou"
+	ok "sistema atualizado"
+	;;
+pkg-clean-cache)
+	xbps-remove -yO || die "xbps-remove -O falhou"
+	ok "cache do xbps limpo (pacotes obsoletos)"
+	;;
+pkg-remove-orphans)
+	xbps-remove -yo || die "xbps-remove -o falhou"
+	ok "pacotes órfãos removidos"
+	;;
+kernel-purge)
+	command -v vkpurge >/dev/null || die "vkpurge não encontrado (pacote base-files)"
+	vkpurge rm all || die "vkpurge falhou"
+	ok "kernels antigos removidos"
+	;;
+pipewire-conf)
+	case ${1:-} in
+	wireplumber) src=/usr/share/examples/wireplumber/10-wireplumber.conf ;;
+	pulse) src=/usr/share/examples/pipewire/20-pipewire-pulse.conf ;;
+	*) die "parte inválida: ${1:-} (wireplumber|pulse)" ;;
+	esac
+	[[ -f $src ]] || die "$src não existe (pacote ${1/pulse/pipewire} instalado?)"
+	mkdir -p /etc/pipewire/pipewire.conf.d || die "não foi possível criar /etc/pipewire/pipewire.conf.d"
+	ln -sf "$src" /etc/pipewire/pipewire.conf.d/ || die "não foi possível criar o link"
+	ok "ativado: /etc/pipewire/pipewire.conf.d/${src##*/}"
+	;;
+*)
+	die "verbo não permitido: ${verb:-<vazio>}"
+	;;
+esac
