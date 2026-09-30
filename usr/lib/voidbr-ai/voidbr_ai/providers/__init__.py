@@ -9,13 +9,45 @@
 funcionando só com as regras do Agent."""
 
 import json
+import logging
 import re
+import time
 import urllib.error
 import urllib.request
 
+log = logging.getLogger("voidbr-ai")
+
+# servidor ocupado / limite de uso: espera e tenta de novo (segundos)
+ESPERAS = (3, 8, 15)
+TEMPORARIOS = (429, 500, 502, 503, 504)
+
 
 class ProviderError(Exception):
-    pass
+    def __init__(self, msg, status=0):
+        super().__init__(msg)
+        self.status = status
+
+
+def _msg_http(code, corpo):
+    """Resposta de erro da API -> uma linha curta e em português."""
+    msg = ""
+    try:
+        d = json.loads(corpo)
+        if isinstance(d, list) and d:
+            d = d[0]
+        err = d.get("error", d) if isinstance(d, dict) else d
+        msg = err.get("message", "") if isinstance(err, dict) else str(err)
+    except (ValueError, AttributeError):
+        msg = corpo
+    msg = " ".join(str(msg).split())
+    if len(msg) > 160:
+        msg = msg[:160] + "…"
+    dica = {401: "chave da API inválida ou ausente",
+            403: "a chave não tem permissão para isso",
+            404: "modelo ou endereço não encontrado (confira o nome do modelo; voidbr-ai --list-models)",
+            429: "limite de uso atingido; tente mais tarde",
+            503: "o serviço está sobrecarregado agora; tente mais tarde"}.get(code, "")
+    return f"HTTP {code}: " + (f"{dica} — {msg}" if dica and msg else dica or msg)
 
 
 class Provider:
@@ -42,6 +74,10 @@ class Provider:
         Devolve {"content": str, "tool_calls": [{"id", "name", "arguments": dict}]}."""
         raise ProviderError("nenhum provider configurado")
 
+    def list_models(self):
+        """Modelos que este provider (e a chave) pode usar."""
+        raise ProviderError("nenhum provider configurado")
+
     def answer(self, messages, on_text=None):
         """Resposta em texto livre (sem ferramentas). on_text(pedaço) recebe o
         texto conforme o modelo escreve, quando o provider suporta streaming."""
@@ -59,6 +95,18 @@ class Provider:
         return f"{self.name}: {self.model}" if self.model else self.name
 
 
+def com_retentativa(fn):
+    """Chama fn(); se o servidor estiver ocupado (429/5xx), espera e tenta de novo."""
+    for espera in (*ESPERAS, None):
+        try:
+            return fn()
+        except ProviderError as e:
+            if espera is None or e.status not in TEMPORARIOS:
+                raise
+            log.info("IA ocupada (%s); nova tentativa em %d s", e.status, espera)
+            time.sleep(espera)
+
+
 def http_json(url, payload=None, headers=None, timeout=30):
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, method="POST" if data else "GET",
@@ -67,8 +115,8 @@ def http_json(url, payload=None, headers=None, timeout=30):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        corpo = e.read().decode("utf-8", "replace")[:300]
-        raise ProviderError(f"HTTP {e.code}: {corpo}") from None
+        corpo = e.read().decode("utf-8", "replace")[:2000]
+        raise ProviderError(_msg_http(e.code, corpo), e.code) from None
     except urllib.error.URLError as e:
         raise ProviderError(f"sem conexão com {url}: {e.reason}") from None
     except (TimeoutError, OSError) as e:
@@ -89,8 +137,8 @@ def http_stream(url, payload, headers=None, timeout=30):
                 if linha:
                     yield json.loads(linha.decode("utf-8"))
     except urllib.error.HTTPError as e:
-        corpo = e.read().decode("utf-8", "replace")[:300]
-        raise ProviderError(f"HTTP {e.code}: {corpo}") from None
+        corpo = e.read().decode("utf-8", "replace")[:2000]
+        raise ProviderError(_msg_http(e.code, corpo), e.code) from None
     except urllib.error.URLError as e:
         raise ProviderError(f"sem conexão com {url}: {e.reason}") from None
     except (TimeoutError, OSError) as e:

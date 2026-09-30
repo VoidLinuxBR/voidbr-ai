@@ -184,6 +184,8 @@ button:disabled {
 progressbar > trough { background-color: #1a1b26; min-height: 8px; border-radius: 4px; }
 progressbar > trough > progress { background-color: #34d399; min-height: 8px; border-radius: 4px; }
 .detalhe       { color: #9ca3af; }
+.codigo        { font-family: monospace; background: #0b1220; padding: 8px 10px;
+                 border-radius: 6px; }
 .hipotese      { color: #fbbf24; font-style: italic; }
 
 .comando {
@@ -220,6 +222,22 @@ popover > contents {
 
 def esc(texto):
     return GLib.markup_escape_text(str(texto or ""))
+
+
+def texto_com_codigo(texto):
+    """Separa os blocos ``` da resposta: [markup do texto, "<tt>código</tt>", ...]."""
+    partes = []
+    for n, pedaco in enumerate(texto.split("```")):
+        if n % 2:           # dentro de ``` … ```: tira a linha da linguagem (```bash)
+            linhas = pedaco.split("\n")
+            if linhas and linhas[0].strip() and " " not in linhas[0].strip():
+                linhas = linhas[1:]
+            codigo = "\n".join(linhas).strip("\n")
+            if codigo:
+                partes.append(f"<tt>{esc(codigo)}</tt>")
+        elif pedaco.strip():
+            partes.append(esc(pedaco.strip()))
+    return partes or [esc(texto)]
 
 
 # ---------------------------------------------------------------------------
@@ -644,7 +662,11 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         c.append(self._label(f"<span weight='bold'>🤖 {esc(rep.provider)}</span>  <span "
                              f"foreground='#9ca3af'><small>{len(rep.tool_calls)} consulta(s) ao "
                              "sistema</small></span>", selecionavel=False))
-        c.append(self._label(f"<span size='large' weight='bold'>{esc(rep.summary)}</span>"))
+        if rep.streamed:        # resposta direta/script: texto normal, código em monoespaçado
+            for parte in texto_com_codigo(rep.summary):
+                c.append(self._label(parte, "codigo" if parte.startswith("<tt>") else None))
+        else:
+            c.append(self._label(f"<span size='large' weight='bold'>{esc(rep.summary)}</span>"))
         if l.get("explicacao"):
             c.append(self._label(esc(l["explicacao"])))
         fatos = [f for f in rep.findings if f.get("confirmed", True)]

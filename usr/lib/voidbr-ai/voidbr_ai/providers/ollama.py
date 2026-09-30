@@ -16,7 +16,8 @@ Chamada de ferramentas (docs/api.md do Ollama): message.tool_calls traz
 {role: "tool", content, tool_name}.
 """
 
-from . import Provider, ProviderError, http_json, http_stream, parse_args, strip_thinking
+from . import (Provider, ProviderError, com_retentativa, http_json, http_stream, parse_args,
+               strip_thinking)
 
 
 class Ollama(Provider):
@@ -29,6 +30,9 @@ class Ollama(Provider):
     def models(self, timeout=3):
         dados = http_json(f"{self.url}/api/tags", timeout=timeout)
         return [m.get("name", "") for m in dados.get("models", [])]
+
+    def list_models(self):
+        return sorted(self.models())
 
     def available(self):
         try:
@@ -55,7 +59,8 @@ class Ollama(Provider):
     def _post(self, payload):
         timeout = int(self.cfg.get("timeout", 180))
         try:
-            return http_json(f"{self.url}/api/chat", payload, timeout=timeout)
+            return com_retentativa(lambda: http_json(f"{self.url}/api/chat", payload,
+                                                     timeout=timeout))
         except ProviderError as e:
             texto = str(e).lower()
             if "think" in payload and "think" in texto:
@@ -92,7 +97,7 @@ class Ollama(Provider):
 
     def answer(self, messages, on_text=None):
         p = self._payload(messages)
-        dados = self._stream(p, on_text) if on_text else self._post(p)
+        dados = com_retentativa(lambda: self._stream(p, on_text)) if on_text else self._post(p)
         texto = strip_thinking((dados.get("message") or {}).get("content", ""))
         if not texto:
             raise ProviderError("o Ollama devolveu uma resposta vazia")

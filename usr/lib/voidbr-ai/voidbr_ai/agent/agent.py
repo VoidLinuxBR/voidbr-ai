@@ -68,8 +68,11 @@ Contexto do sistema: {contexto}"""
 
 KNOWLEDGE_PROMPT = """Você é o VoidBR AI, assistente do VoidBR Linux (baseado no Void Linux: init runit,
 serviços em /etc/sv e /var/service, pacotes xbps; no VoidBR instala-se com vinstall; nunca systemd).
-Responda à pergunta de forma direta e curta (poucas frases), em português do Brasil, para um
-usuário comum. Se envolver instalar algo no VoidBR, cite o comando com vinstall ou xbps-install.
+Responda de forma direta e curta (poucas frases), em português do Brasil, para um usuário comum.
+Se envolver instalar algo no VoidBR, cite o comando com vinstall ou xbps-install.
+Se pedirem um script ou código, entregue o código completo num bloco ``` com a linguagem
+(ex: ```bash), comentado em português, e diga em uma linha como usar. Scripts bash para o
+VoidBR: use sv (runit) e xbps; nunca systemctl/apt. Nomes de variáveis de cores em minúsculo.
 Sistema: {contexto}"""
 
 INTERPRET_PROMPT = """Você é o VoidBR AI, técnico de sistemas do VoidBR Linux (Void Linux, runit, xbps;
@@ -200,18 +203,24 @@ def _termo_pergunta(texto):
     return m.group(1) if m else None
 
 
-# pergunta de conhecimento ("o que é", "para que serve", "explique"...): a IA responde
-# direto, sem ferramentas — bem mais rápido. Se falar da máquina do usuário, investiga.
+# pergunta de conhecimento ("o que é", "para que serve", "explique"...) ou pedido de
+# texto/código ("faça um script..."): a IA responde direto, sem ferramentas — bem mais
+# rápido. Se falar da máquina do usuário ("minha rede não funciona"), investiga.
 _RE_CONHECIMENTO = re.compile(
     r"^\s*(?:o\s+que\s+(?:e|eh|sao|significa|quer\s+dizer)|que\s+e|o\s+que\s+faz|"
     r"para\s+que\s+serve|pra\s+que\s+serve|como\s+funciona|quem\s+(?:e|foi)|"
-    r"qual\s+(?:e\s+)?a\s+diferenca|(?:me\s+)?expli(?:que|ca)|defina)\b")
+    r"qual\s+(?:e\s+)?a\s+diferenca|(?:me\s+)?expli(?:que|ca)|defina|"
+    r"(?:me\s+)?(?:faca|faz|crie|cria|escreva|escreve|gere|gera|monte|monta)\s+(?:um|uma|o|a)\b)")
+_RE_CODIGO = re.compile(r"\b(?:script|codigo|programa\s+em|funcao\s+(?:em|que)|regex|"
+                        r"one-?liner|alias)\b")
 _RE_PESSOAL = re.compile(r"\b(?:meu|minha|meus|minhas|aqui|nesta|neste|nessa|nesse|esse\s+erro|"
                          r"este\s+erro|deu|dando|nao\s+funciona|parou|travou|travando)\b")
 
 
 def _conhecimento(texto):
     t = _norm(texto)
+    if _RE_CODIGO.search(t):            # pedido de script/código: sempre resposta direta
+        return True
     return bool(_RE_CONHECIMENTO.match(t)) and not _RE_PESSOAL.search(t)
 
 
@@ -575,7 +584,7 @@ class Agent:
                 resp = self.provider.chat_tools(msgs, [ferramentas[-1]] if ultimo else ferramentas)
             except ProviderError as e:
                 rep.llm_error = str(e)
-                self.emit("llm", eid, f"A IA falhou ({relogio.parar()} s)", "fail", str(e))
+                self.emit("llm", eid, f"A IA falhou ({relogio.parar()} s)", "fail")
                 break
             seg = relogio.parar()
             consultas = [c for c in resp["tool_calls"] if c["name"] != "responder"]
@@ -593,9 +602,9 @@ class Agent:
                 msgs.append(self.provider.tool_message(call, self._chamar(rep, call)))
             if final is not None:
                 break
-        self.emit("llm", "done", f"Investigação concluída ({int(time.monotonic() - inicio)} s)",
-                  "ok" if (final or texto_livre) else "warn",
-                  f"{len(rep.tool_calls)} consulta(s) ao sistema")
+        if final or texto_livre:
+            self.emit("llm", "done", f"Investigação concluída ({int(time.monotonic() - inicio)} s)",
+                      "ok", f"{len(rep.tool_calls)} consulta(s) ao sistema")
 
         if final is None and texto_livre:
             try:
@@ -607,7 +616,8 @@ class Agent:
             if final is None:
                 final = {"diagnostico": texto_livre}
         if final is None:
-            rep.summary = f"Não consegui concluir a investigação: {rep.llm_error or 'sem resposta'}"
+            rep.summary = (f"A IA falhou: {rep.llm_error}" if rep.llm_error else
+                           "Não consegui concluir a investigação: a IA não respondeu")
             return self._fechar(rep, text)
 
         rep.llm = {"diagnostico": str(final.get("diagnostico") or final.get("resposta") or "").strip(),
@@ -659,7 +669,7 @@ class Agent:
         except ProviderError as e:
             seg = primeiro[0] if primeiro else relogio.parar()
             rep.llm_error = str(e)
-            self.emit("llm", "done", f"A IA falhou ({seg} s)", "fail", str(e))
+            self.emit("llm", "done", f"A IA falhou ({seg} s)", "fail")
             rep.summary = f"A IA falhou: {e}"
             return self._fechar(rep, text)
         if not primeiro:

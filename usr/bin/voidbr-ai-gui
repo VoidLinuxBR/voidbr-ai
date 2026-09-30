@@ -9,6 +9,9 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.2.3 (2026-09-30): pedidos de script/código respondidos direto (código em
+#     monoespaçado na GUI); nova tentativa automática quando a API está ocupada
+#     (429/503); erro da IA curto e mostrado uma vez; --list-models.
 #   - v0.2.2 (2026-09-30): IA mais rápida: "o que é X" responde direto sem ferramentas;
 #     só as ferramentas do assunto vão para a IA; num_ctx 8192; keep_alive 30m;
 #     resposta aparece enquanto a IA escreve, com o tempo decorrido.

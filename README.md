@@ -38,12 +38,14 @@ AMD/Intel → `vulkan-loader` + `mesa-vulkan-radeon`/`-intel` (o Vulkan do Ollam
 voidbr-ai-gui                               # interface gráfica (GTK4)
 voidbr-ai                                   # conversa no terminal
 voidbr-ai "como instalo o steam?"
+voidbr-ai "faça um script que faça backup da pasta ~/Documentos"
 voidbr-ai --checkup                         # check-up geral
 voidbr-ai --diagnose audio                  # network, storage, packages, services,
                                             # audio, bluetooth, system
 voidbr-ai --diagnose network --json         # saída estruturada
 voidbr-ai --setup-ai                        # configura a IA local (Ollama)
 voidbr-ai --list-tools                      # ferramentas e ações disponíveis
+voidbr-ai --list-models                     # modelos que o provider/chave pode usar
 voidbr-ai --history                         # últimas sessões
 ```
 

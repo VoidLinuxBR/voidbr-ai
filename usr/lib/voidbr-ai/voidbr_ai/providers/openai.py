@@ -19,7 +19,7 @@ function: {name, arguments: "<json>"}}]; o resultado volta como
 import json
 import os
 
-from . import Provider, ProviderError, http_json, parse_args, strip_thinking
+from . import Provider, ProviderError, com_retentativa, http_json, parse_args, strip_thinking
 
 
 class OpenAI(Provider):
@@ -48,11 +48,22 @@ class OpenAI(Provider):
                            "ou openai.api_key_file)")
         return True, f"OpenAI {self.model}"
 
-    def _post(self, payload):
+    def _headers(self):
         chave = self.api_key()
-        headers = {"Authorization": f"Bearer {chave}"} if chave else {}
-        dados = http_json(f"{self.url}/chat/completions", payload, headers=headers,
+        return {"Authorization": f"Bearer {chave}"} if chave else {}
+
+    def list_models(self):
+        dados = http_json(f"{self.url}/models", headers=self._headers(),
                           timeout=int(self.cfg.get("timeout", 90)))
+        ids = [str(m.get("id", "")) for m in dados.get("data", []) if isinstance(m, dict)]
+        # o Gemini devolve "models/gemini-…"; no pedido vai só o nome
+        return sorted(i.split("/", 1)[1] if i.startswith("models/") else i for i in ids if i)
+
+    def _post(self, payload):
+        headers = self._headers()
+        dados = com_retentativa(lambda: http_json(f"{self.url}/chat/completions", payload,
+                                                  headers=headers,
+                                                  timeout=int(self.cfg.get("timeout", 90))))
         try:
             return dados["choices"][0]["message"]
         except (KeyError, IndexError, TypeError):

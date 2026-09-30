@@ -24,6 +24,7 @@ import sys
 
 from .. import APP_NAME, APP_VERSION, config, history, setup, tools
 from ..agent import Agent
+from ..providers import ProviderError
 
 red = yellow = green = blue = cyan = bold = dim = reset = ""
 
@@ -124,7 +125,7 @@ def mostrar(rep):
             for s in l["sugestoes"]:
                 print(f"     → {s}")
 
-    if rep.llm_error and not l and rep.provider:
+    if rep.llm_error and not l and rep.provider and rep.llm_error not in rep.summary:
         print(f"\n{dim}🤖 IA: {rep.llm_error}{reset}")
     if rep.needs_ai and rep.domain:
         print(f"\n{dim}💡 Com a IA configurada a resposta é sob medida: voidbr-ai --setup-ai{reset}")
@@ -196,6 +197,29 @@ def listar_ferramentas(agent):
         print(f"  {tipo} {bold}{t.name}{reset}{quem}{off} — {t.description}")
 
 
+def listar_modelos(agent):
+    """--list-models: pergunta ao provider quais modelos a chave/servidor oferece."""
+    prov = agent.provider
+    if prov.name == "none":
+        print(f"{red}❌ Nenhuma IA configurada{reset} "
+              f"{dim}({prov.cfg.get('_motivo') or 'defina provider no config.toml'}){reset}")
+        return 1
+    try:
+        nomes = prov.list_models()
+    except ProviderError as e:
+        print(f"{red}❌ {prov.name}: {e}{reset}")
+        return 1
+    em_uso = (prov.model, f"{prov.model}:latest")
+    print(f"{bold}🤖 Modelos disponíveis ({prov.name}, {getattr(prov, 'url', '')}):{reset}")
+    for n in nomes:
+        print(f"  • {n}" + (f"  {green}← em uso{reset}" if n in em_uso else ""))
+    if prov.model and not any(n in em_uso for n in nomes):
+        print(f"\n{yellow}⚠️  O modelo configurado ({prov.model}) não está na lista.{reset}")
+    print(f"\n{dim}Para trocar: model = \"<nome>\" em [{prov.name}] no "
+          f"{config.user_config_path()}{reset}")
+    return 0
+
+
 def assistente_ia(agent):
     """--setup-ai: o mesmo assistente da GUI, no terminal."""
     hw = setup.hardware()
@@ -241,6 +265,8 @@ def main(argv=None):
     p.add_argument("--model", help="sobrescreve o modelo do provider")
     p.add_argument("--setup-ai", action="store_true", help="configura a IA local (Ollama)")
     p.add_argument("--list-tools", action="store_true", help="lista as ferramentas e ações")
+    p.add_argument("--list-models", action="store_true",
+                   help="lista os modelos que o provider (e a chave) pode usar")
     p.add_argument("--history", action="store_true", help="lista as últimas sessões")
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("-V", "--version", action="version", version=f"{APP_NAME} {APP_VERSION}")
@@ -260,6 +286,8 @@ def main(argv=None):
     if a.list_tools:
         listar_ferramentas(agent)
         return 0
+    if a.list_models:
+        return listar_modelos(agent)
     if a.history:
         for s in history.list_sessions(20):
             print(f"  {dim}{s['time']}{reset}  {s['question']}  →  {s['summary']}")
