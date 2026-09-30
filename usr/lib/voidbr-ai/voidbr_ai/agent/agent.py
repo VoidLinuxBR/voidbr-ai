@@ -32,6 +32,7 @@ CLI e GUI usam esta mesma classe; nenhuma delas executa comandos por conta próp
 import json
 import logging
 import re
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -64,6 +65,12 @@ Catálogo de ações (propor, nunca executar):
 {catalogo}
 
 Contexto do sistema: {contexto}"""
+
+KNOWLEDGE_PROMPT = """Você é o VoidBR AI, assistente do VoidBR Linux (baseado no Void Linux: init runit,
+serviços em /etc/sv e /var/service, pacotes xbps; no VoidBR instala-se com vinstall; nunca systemd).
+Responda à pergunta de forma direta e curta (poucas frases), em português do Brasil, para um
+usuário comum. Se envolver instalar algo no VoidBR, cite o comando com vinstall ou xbps-install.
+Sistema: {contexto}"""
 
 INTERPRET_PROMPT = """Você é o VoidBR AI, técnico de sistemas do VoidBR Linux (Void Linux, runit, xbps;
 no VoidBR instala-se com vinstall; nunca systemd). Você recebe em JSON o estado REAL coletado,
@@ -98,7 +105,7 @@ def _responder_schema(nomes_acoes):
 
 @dataclass
 class Event:
-    kind: str                # "step" | "tool" | "llm" | "verify" | "output" | "info"
+    kind: str                # "step" | "tool" | "llm" | "verify" | "output" | "info" | "stream"
     id: str
     label: str
     status: str = "running"  # running | ok | warn | fail | info
@@ -121,6 +128,7 @@ class Report:
     time: str = ""
     session_path: str = ""
     needs_ai: bool = False                           # pergunta livre sem LLM configurado
+    streamed: bool = False                           # a resposta já foi mostrada ao vivo
     tool_calls: list = field(default_factory=list)
     executions: list = field(default_factory=list)
 
@@ -192,7 +200,60 @@ def _termo_pergunta(texto):
     return m.group(1) if m else None
 
 
-def _compacto(obj, limite=5000):
+# pergunta de conhecimento ("o que é", "para que serve", "explique"...): a IA responde
+# direto, sem ferramentas — bem mais rápido. Se falar da máquina do usuário, investiga.
+_RE_CONHECIMENTO = re.compile(
+    r"^\s*(?:o\s+que\s+(?:e|eh|sao|significa|quer\s+dizer)|que\s+e|o\s+que\s+faz|"
+    r"para\s+que\s+serve|pra\s+que\s+serve|como\s+funciona|quem\s+(?:e|foi)|"
+    r"qual\s+(?:e\s+)?a\s+diferenca|(?:me\s+)?expli(?:que|ca)|defina)\b")
+_RE_PESSOAL = re.compile(r"\b(?:meu|minha|meus|minhas|aqui|nesta|neste|nessa|nesse|esse\s+erro|"
+                         r"este\s+erro|deu|dando|nao\s+funciona|parou|travou|travando)\b")
+
+
+def _conhecimento(texto):
+    t = _norm(texto)
+    return bool(_RE_CONHECIMENTO.match(t)) and not _RE_PESSOAL.search(t)
+
+
+# ferramentas enviadas ao LLM por assunto (em vez do catálogo inteiro)
+_TOOL_DOMAINS = {
+    "network": {"network"},
+    "storage": {"storage"},
+    "packages": {"packages"},
+    "services": {"services"},
+    "audio": {"audio", "services"},
+    "bluetooth": {"bluetooth", "services"},
+    "system": {"system", "hardware", "boot"},
+}
+_TOOLS_BASE = ("system.info", "system.memory", "system.processes", "system.log",
+               "service.status", "pkg.search", "pkg.info", "pkg.install")
+
+
+class _Relogio:
+    """Atualiza "🧠 Pensando… 12 s" a cada segundo enquanto espera a IA."""
+
+    def __init__(self, emit, eid, rotulo):
+        self.emit, self.eid, self.rotulo = emit, eid, rotulo
+        self.inicio = time.monotonic()
+        self._parar = threading.Event()
+        self._t = threading.Thread(target=self._rodar, daemon=True)
+        self._t.start()
+
+    def _rodar(self):
+        while not self._parar.wait(1):
+            self.emit("llm", self.eid, f"{self.rotulo} {self.segundos} s")
+
+    @property
+    def segundos(self):
+        return int(time.monotonic() - self.inicio)
+
+    def parar(self):
+        self._parar.set()
+        self._t.join(timeout=2)
+        return self.segundos
+
+
+def _compacto(obj, limite=3500):
     texto = json.dumps(obj, ensure_ascii=False, default=str)
     if len(texto) > limite:
         texto = texto[:limite] + '… (resultado cortado)"'
@@ -482,10 +543,20 @@ class Agent:
         ctx = (f"{c['distro']['name']} ({c['distro']['libc']}), kernel {c['kernel']}, {c['arch']}, "
                f"init {c['init'].get('service_manager')}, sessão {c['desktop'].get('session')} "
                f"{c['desktop'].get('desktop')}".strip())
-        acoes_nomes = [t.name for t in self.registry.list("action")
-                       if t.llm and t.name not in self.registry.disabled]
-        sistema = INVESTIGATE_PROMPT.format(catalogo=self.registry.action_catalog(), contexto=ctx)
-        ferramentas = self.registry.llm_schemas() + [_responder_schema(acoes_nomes)]
+        if _conhecimento(text):
+            return self._responder_direto(rep, text, ctx)
+
+        # só as ferramentas do assunto (+ as básicas); assunto desconhecido = todas
+        dominios = self.classify(text)
+        tdom = set().union(*(_TOOL_DOMAINS.get(d, {d}) for d in dominios)) if dominios else None
+        extra = _TOOLS_BASE if tdom else ()
+        acoes_nomes = [t.name for t in self.registry.llm_tools("action", tdom, extra)]
+        sistema = INVESTIGATE_PROMPT.format(catalogo=self.registry.action_catalog(tdom, extra),
+                                            contexto=ctx)
+        ferramentas = self.registry.llm_schemas(tdom, extra) + [_responder_schema(acoes_nomes)]
+        log.info("IA: %d ferramenta(s) (%s)", len(ferramentas) - 1,
+                 ", ".join(sorted(tdom)) if tdom else "todas")
+        inicio = time.monotonic()
         msgs = [{"role": "system", "content": sistema}, *self.history[-6:],
                 {"role": "user", "content": text}]
         max_passos = int(self.cfg.get("agent", {}).get("max_steps", 8))
@@ -497,15 +568,18 @@ class Agent:
                 msgs.append({"role": "user", "content": "Limite de consultas atingido. Responda "
                              "agora chamando a ferramenta responder com o que já coletou."})
             eid = f"think{passo}"
-            self.emit("llm", eid, "🧠 Pensando…" if passo == 1 else "🧠 Analisando os resultados…")
+            rotulo = "🧠 Pensando…" if passo == 1 else "🧠 Analisando os resultados…"
+            self.emit("llm", eid, rotulo)
+            relogio = _Relogio(self.emit, eid, rotulo)
             try:
                 resp = self.provider.chat_tools(msgs, [ferramentas[-1]] if ultimo else ferramentas)
             except ProviderError as e:
                 rep.llm_error = str(e)
-                self.emit("llm", eid, "A IA falhou", "fail", str(e))
+                self.emit("llm", eid, f"A IA falhou ({relogio.parar()} s)", "fail", str(e))
                 break
+            seg = relogio.parar()
             consultas = [c for c in resp["tool_calls"] if c["name"] != "responder"]
-            self.emit("llm", eid, "🧠 IA", "info",
+            self.emit("llm", eid, f"🧠 IA ({seg} s)", "info",
                       f"vai consultar {len(consultas)} ferramenta(s)" if consultas else "respondeu")
             msgs.append(self.provider.assistant_message(resp))
             if not resp["tool_calls"]:
@@ -519,7 +593,8 @@ class Agent:
                 msgs.append(self.provider.tool_message(call, self._chamar(rep, call)))
             if final is not None:
                 break
-        self.emit("llm", "done", "Investigação concluída", "ok" if (final or texto_livre) else "warn",
+        self.emit("llm", "done", f"Investigação concluída ({int(time.monotonic() - inicio)} s)",
+                  "ok" if (final or texto_livre) else "warn",
                   f"{len(rep.tool_calls)} consulta(s) ao sistema")
 
         if final is None and texto_livre:
@@ -561,6 +636,40 @@ class Agent:
                 continue
             if a.id not in {x.id for x in rep.actions}:
                 rep.actions.append(a)
+        return self._fechar(rep, text)
+
+    def _responder_direto(self, rep, text, ctx):
+        """Pergunta de conhecimento: resposta em texto, sem ferramentas, mostrada
+        conforme a IA escreve (eventos "stream")."""
+        msgs = [{"role": "system", "content": KNOWLEDGE_PROMPT.format(contexto=ctx)},
+                *self.history[-6:], {"role": "user", "content": text}]
+        rotulo = "🧠 Pensando…"
+        self.emit("llm", "think1", rotulo)
+        relogio = _Relogio(self.emit, "think1", rotulo)
+        primeiro = []
+
+        def pedaco(t):
+            if not primeiro:
+                primeiro.append(relogio.parar())
+                self.emit("llm", "think1", f"🧠 IA ({primeiro[0]} s até começar)", "info")
+            self.emit("stream", "resposta", t, "info")
+
+        try:
+            texto = self.provider.answer(msgs, on_text=pedaco)
+        except ProviderError as e:
+            seg = primeiro[0] if primeiro else relogio.parar()
+            rep.llm_error = str(e)
+            self.emit("llm", "done", f"A IA falhou ({seg} s)", "fail", str(e))
+            rep.summary = f"A IA falhou: {e}"
+            return self._fechar(rep, text)
+        if not primeiro:
+            relogio.parar()
+        self.emit("llm", "done", f"Resposta concluída ({int(time.monotonic() - relogio.inicio)} s)",
+                  "ok")
+        rep.streamed = True
+        rep.llm = {"diagnostico": texto.strip(), "explicacao": "", "fatos": [], "hipoteses": [],
+                   "sugestoes": [], "ignoradas": []}
+        rep.summary = texto.strip()
         return self._fechar(rep, text)
 
     def _chamar(self, rep, call):

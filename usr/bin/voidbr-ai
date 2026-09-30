@@ -9,6 +9,12 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.2.2 (2026-09-30): IA mais rápida: "o que é X" responde direto sem ferramentas;
+#     só as ferramentas do assunto vão para a IA; num_ctx 8192; keep_alive 30m;
+#     resposta aparece enquanto a IA escreve, com o tempo decorrido.
+#   - v0.2.1 (2026-09-30): provider "auto" (usa o Ollama local sozinho se estiver
+#     rodando com modelo); "o que é X" sem IA; busca de pacotes sem repetidos;
+#     correção do argumento "name" no Tool Registry.
 #   - v0.2.0 (2026-09-30): Ajuda geral: a IA investiga o sistema com um catálogo
 #     de ferramentas de leitura (tool calling do Ollama/OpenAI) e propõe ações da
 #     lista branca. Novos domínios: disco, pacotes, serviços, áudio, Bluetooth,

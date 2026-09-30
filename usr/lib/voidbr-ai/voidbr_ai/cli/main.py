@@ -45,10 +45,21 @@ class Saida:
 
     def __init__(self, silencioso=False):
         self.silencioso = silencioso
+        self.fluxo = False           # escrevendo a resposta da IA ao vivo
 
     def __call__(self, ev):
         if self.silencioso:
             return
+        if ev.kind == "stream":
+            if not self.fluxo:
+                self.fluxo = True
+                print("\033[2K", end="", flush=True, file=sys.stderr)
+                print(f"\n{bold}{cyan}🤖{reset} ", end="", flush=True)
+            print(ev.label, end="", flush=True)
+            return
+        if self.fluxo:
+            self.fluxo = False
+            print("\n", flush=True)
         if ev.kind == "output":
             print(f"\033[2K    {dim}{ev.label[:110]}{reset}", end="\r", flush=True, file=sys.stderr)
             return
@@ -68,7 +79,8 @@ def mostrar(rep):
     print()
     l = rep.llm or {}
     if rep.mode == "llm":
-        print(f"{bold}{cyan}🤖 {rep.summary}{reset}")
+        if not rep.streamed:         # já foi mostrada enquanto a IA escrevia
+            print(f"{bold}{cyan}🤖 {rep.summary}{reset}")
         if l.get("explicacao"):
             print(f"   {l['explicacao']}")
         fatos = [f for f in rep.findings if f.get("confirmed", True)]

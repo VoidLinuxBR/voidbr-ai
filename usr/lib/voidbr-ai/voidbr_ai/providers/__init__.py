@@ -42,6 +42,11 @@ class Provider:
         Devolve {"content": str, "tool_calls": [{"id", "name", "arguments": dict}]}."""
         raise ProviderError("nenhum provider configurado")
 
+    def answer(self, messages, on_text=None):
+        """Resposta em texto livre (sem ferramentas). on_text(pedaço) recebe o
+        texto conforme o modelo escreve, quando o provider suporta streaming."""
+        raise ProviderError("nenhum provider configurado")
+
     def assistant_message(self, resp):
         """A resposta do modelo no formato que a API espera de volta no histórico."""
         raise NotImplementedError
@@ -61,6 +66,28 @@ def http_json(url, payload=None, headers=None, timeout=30):
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        corpo = e.read().decode("utf-8", "replace")[:300]
+        raise ProviderError(f"HTTP {e.code}: {corpo}") from None
+    except urllib.error.URLError as e:
+        raise ProviderError(f"sem conexão com {url}: {e.reason}") from None
+    except (TimeoutError, OSError) as e:
+        raise ProviderError(f"falha ao falar com {url}: {e}") from None
+    except ValueError:
+        raise ProviderError(f"resposta inválida de {url}") from None
+
+
+def http_stream(url, payload, headers=None, timeout=30):
+    """POST com resposta em NDJSON (uma linha JSON por pedaço): gera cada objeto."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST",
+                                 headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            for linha in r:
+                linha = linha.strip()
+                if linha:
+                    yield json.loads(linha.decode("utf-8"))
     except urllib.error.HTTPError as e:
         corpo = e.read().decode("utf-8", "replace")[:300]
         raise ProviderError(f"HTTP {e.code}: {corpo}") from None

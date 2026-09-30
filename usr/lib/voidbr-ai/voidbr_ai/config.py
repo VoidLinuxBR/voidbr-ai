@@ -30,7 +30,8 @@ DEFAULTS = {
         "url": "http://127.0.0.1:11434",
         "model": "qwen3:4b",
         "timeout": 180,
-        "num_ctx": 16384,            # contexto: o catálogo de ferramentas ocupa ~3k tokens
+        "num_ctx": 8192,             # contexto (tokens); maior = mais memória
+        "keep_alive": "30m",         # tempo que o modelo fica carregado depois da última pergunta
         "think": False,              # qwen3: responde sem o modo "pensando" (bem mais rápido)
     },
     "openai": {

@@ -63,6 +63,15 @@ class OpenAI(Provider):
                           "response_format": {"type": "json_object"}})
         return strip_thinking(msg.get("content") or "")
 
+    def answer(self, messages, on_text=None):
+        texto = strip_thinking(self._post({"model": self.model, "messages": messages})
+                               .get("content") or "")
+        if not texto:
+            raise ProviderError("a API devolveu uma resposta vazia")
+        if on_text:
+            on_text(texto)
+        return texto
+
     def chat_tools(self, messages, tools):
         msg = self._post({"model": self.model, "messages": messages, "tools": tools})
         chamadas = [{"id": c.get("id", f"call{i}"), "name": (c.get("function") or {}).get("name", ""),

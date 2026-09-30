@@ -8,7 +8,7 @@
 """Ollama: roda o modelo na própria máquina (nada sai para a internet).
 
     GET  {url}/api/tags   lista os modelos baixados
-    POST {url}/api/chat   {model, messages, tools?, stream: false, format?}
+    POST {url}/api/chat   {model, messages, tools?, stream, format?, keep_alive}
     POST {url}/api/pull   baixa um modelo (stream de progresso; ver setup.py)
 
 Chamada de ferramentas (docs/api.md do Ollama): message.tool_calls traz
@@ -16,7 +16,7 @@ Chamada de ferramentas (docs/api.md do Ollama): message.tool_calls traz
 {role: "tool", content, tool_name}.
 """
 
-from . import Provider, ProviderError, http_json, parse_args, strip_thinking
+from . import Provider, ProviderError, http_json, http_stream, parse_args, strip_thinking
 
 
 class Ollama(Provider):
@@ -44,7 +44,9 @@ class Ollama(Provider):
 
     def _payload(self, messages, **extra):
         p = {"model": self.model, "messages": messages, "stream": False,
-             "options": {"temperature": 0.2, "num_ctx": int(self.cfg.get("num_ctx", 16384))}}
+             "options": {"temperature": 0.2, "num_ctx": int(self.cfg.get("num_ctx", 8192))},
+             # mantém o modelo carregado entre perguntas (carregar de novo custa caro)
+             "keep_alive": str(self.cfg.get("keep_alive", "30m"))}
         if "think" in self.cfg:
             p["think"] = bool(self.cfg["think"])
         p.update(extra)
@@ -64,6 +66,37 @@ class Ollama(Provider):
                 raise ProviderError(f"o modelo '{self.model}' não suporta ferramentas; use um "
                                     "modelo com suporte (ex: qwen3, llama3.1)") from None
             raise
+
+    def _stream(self, payload, on_text):
+        """/api/chat com stream: repassa o texto conforme chega e devolve a mensagem inteira."""
+        url, timeout = f"{self.url}/api/chat", int(self.cfg.get("timeout", 180))
+        payload = {**payload, "stream": True}
+        texto, chamadas = [], []
+        try:
+            partes = http_stream(url, payload, timeout=timeout)
+            for d in partes:
+                if d.get("error"):
+                    raise ProviderError(str(d["error"]))
+                m = d.get("message") or {}
+                if m.get("content"):
+                    texto.append(m["content"])
+                    on_text(m["content"])
+                chamadas += m.get("tool_calls") or []
+                if d.get("done"):
+                    break
+        except ProviderError as e:
+            if "think" in payload and "think" in str(e).lower() and not texto:
+                return self._stream({k: v for k, v in payload.items() if k != "think"}, on_text)
+            raise
+        return {"message": {"content": "".join(texto), "tool_calls": chamadas}}
+
+    def answer(self, messages, on_text=None):
+        p = self._payload(messages)
+        dados = self._stream(p, on_text) if on_text else self._post(p)
+        texto = strip_thinking((dados.get("message") or {}).get("content", ""))
+        if not texto:
+            raise ProviderError("o Ollama devolveu uma resposta vazia")
+        return texto
 
     def chat(self, messages):
         dados = self._post(self._payload(messages, format="json"))

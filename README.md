@@ -111,7 +111,8 @@ provider = "ollama"
 
 [ollama]
 model = "qwen3:4b"
-num_ctx = 16384     # o catálogo de ferramentas ocupa ~3k tokens
+num_ctx = 8192      # contexto (tokens); maior = mais memória
+keep_alive = "30m"  # modelo fica carregado entre as perguntas
 think = false       # qwen3 sem o modo "pensando" (bem mais rápido)
 
 [agent]

@@ -174,19 +174,24 @@ class Registry:
     def enabled(self, name):
         return name in self._tools and name not in self.disabled
 
-    def llm_schemas(self):
-        """Ferramentas de LEITURA que o LLM pode chamar."""
-        return [t.schema() for t in self._tools.values()
-                if t.kind == "read" and t.llm and t.name not in self.disabled]
+    def llm_tools(self, kind, domains=None, extra=()):
+        """Ferramentas visíveis ao LLM do tipo `kind`; com `domains`, só as desses
+        domínios mais as de `extra` (menos ferramentas = prompt menor = mais rápido)."""
+        return [t for t in self._tools.values()
+                if t.kind == kind and t.llm and t.name not in self.disabled
+                and (domains is None or t.domain in domains or t.name in extra)]
 
-    def action_catalog(self):
+    def llm_schemas(self, domains=None, extra=()):
+        """Ferramentas de LEITURA que o LLM pode chamar."""
+        return [t.schema() for t in self.llm_tools("read", domains, extra)]
+
+    def action_catalog(self, domains=None, extra=()):
         """Descrição das ações (para o LLM propor, nunca executar)."""
         itens = []
-        for t in self._tools.values():
-            if t.kind == "action" and t.llm and t.name not in self.disabled:
-                ps = ", ".join(f"{k}: {v.get('type')}" + (" (obrigatório)" if k in t.required else "")
-                               for k, v in t.params.items())
-                itens.append(f"- {t.name}({ps}): {t.description}")
+        for t in self.llm_tools("action", domains, extra):
+            ps = ", ".join(f"{k}: {v.get('type')}" + (" (obrigatório)" if k in t.required else "")
+                           for k, v in t.params.items())
+            itens.append(f"- {t.name}({ps}): {t.description}")
         return "\n".join(itens)
 
     def call(self, name, /, **kwargs):

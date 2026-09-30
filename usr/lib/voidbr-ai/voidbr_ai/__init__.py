@@ -21,4 +21,4 @@ A CLI e a GUI usam o mesmo Agent; nenhuma delas executa comandos diretamente.
 """
 
 APP_NAME = "voidbr-ai"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.2"

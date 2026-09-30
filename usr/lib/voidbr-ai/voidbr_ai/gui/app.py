@@ -247,7 +247,22 @@ class CartaoPassos(Gtk.Box):
             self.barra.set_fraction(frac)
         self.barra.set_text(f"{texto}  {frac * 100:.1f}%" if frac is not None else texto)
 
+    def remover_fluxo(self):
+        """Tira o texto ao vivo (a resposta completa aparece no cartão da IA)."""
+        lbl = self.linhas.pop("__fluxo", None)
+        if lbl is not None:
+            self.remove(lbl)
+
     def evento(self, ev):
+        if ev.kind == "stream":
+            lbl = self.linhas.get("__fluxo")
+            if lbl is None:
+                lbl = Gtk.Label(xalign=0, wrap=True, selectable=True)
+                lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                self.linhas["__fluxo"] = lbl
+                self.append(lbl)
+            lbl.set_text(lbl.get_text() + ev.label)
+            return
         if ev.kind == "output":
             lbl = self.linhas.get("__saida")
             if lbl is None:
@@ -586,6 +601,8 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         if falha is not None:
             self.erro("O diagnóstico falhou", str(falha))
             return False
+        if rep.streamed and self.passos is not None:
+            self.passos.remover_fluxo()
         if rep.mode == "llm":
             self.cartao_ia(rep)
         elif not rep.domain:
