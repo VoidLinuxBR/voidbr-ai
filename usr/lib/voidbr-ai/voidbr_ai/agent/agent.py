@@ -37,7 +37,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 
-from .. import APP_VERSION, config, context, history, tools
+from .. import APP_VERSION, config, context, explain, history, kb, report, tools
 from ..util import run
 from ..providers import ProviderError, get_provider
 
@@ -64,7 +64,7 @@ Como trabalhar:
 Catálogo de ações (propor, nunca executar):
 {catalogo}
 
-Contexto do sistema: {contexto}"""
+Contexto do sistema: {contexto}{documentacao}"""
 
 KNOWLEDGE_PROMPT = """Você é o VoidBR AI, assistente do VoidBR Linux (baseado no Void Linux: init runit,
 serviços em /etc/sv e /var/service, pacotes xbps; no VoidBR instala-se com vinstall; nunca systemd).
@@ -73,7 +73,29 @@ Se envolver instalar algo no VoidBR, cite o comando com vinstall ou xbps-install
 Se pedirem um script ou código, entregue o código completo num bloco ``` com a linguagem
 (ex: ```bash), comentado em português, e diga em uma linha como usar. Scripts bash para o
 VoidBR: use sv (runit) e xbps; nunca systemctl/apt. Nomes de variáveis de cores em minúsculo.
-Sistema: {contexto}"""
+Sistema: {contexto}{documentacao}"""
+
+EXPLAIN_PROMPT = """Você é o VoidBR AI, técnico do VoidBR Linux (Void Linux: runit, xbps; no VoidBR
+instala-se com vinstall; nunca systemd). O usuário colou um {tipo}. NADA foi executado.
+{tarefa}
+Português do Brasil, curto e claro, para um usuário comum. Use a análise automática abaixo
+(os riscos listados são reais: não os minimize).
+Análise automática: {analise}
+Sistema: {contexto}{documentacao}"""
+
+_TAREFA = {
+    "comando": ("Explique o que o comando faz, parte por parte; diga o risco (seguro / cuidado / "
+                "perigoso) e por quê; se for perigoso, diga o que pode dar errado e uma forma "
+                "mais segura. Não mande o usuário executar nada perigoso."),
+    "erro": ("Explique o que o erro significa, a causa mais provável e como resolver no VoidBR, "
+             "passo a passo, com os comandos (sv, xbps/vinstall)."),
+}
+
+DOC_PROMPT = """
+
+Trechos da documentação local do Void/VoidBR (confiáveis; prefira estes comandos e nomes
+de pacotes, e cite a fonte quando usar):
+{trechos}"""
 
 INTERPRET_PROMPT = """Você é o VoidBR AI, técnico de sistemas do VoidBR Linux (Void Linux, runit, xbps;
 no VoidBR instala-se com vinstall; nunca systemd). Você recebe em JSON o estado REAL coletado,
@@ -148,6 +170,8 @@ class Report:
             "llm_error": self.llm_error, "provider": self.provider,
             "tool_calls": [{k: c[k] for k in ("tool", "args")} for c in self.tool_calls],
             "executions": self.executions,
+            # nomes de redes Wi-Fi vistos na coleta: o relatório exportado os oculta
+            "redact": sorted(report._ssids(self.state)),
         }
         if with_state:
             d["state"] = self.state
@@ -165,11 +189,12 @@ class ExecResult:
     check: str = ""           # mensagem da verificação da própria ação
     remaining: list = field(default_factory=list)
     after: Report = None
+    snapshot: int = None      # snapshot criado antes (voidbr-snapper-manager), para desfazer
 
     def to_dict(self):
         return {"action": self.action.to_dict(), "ok": self.ok, "output": self.output[-2000:],
                 "cancelled": self.cancelled, "resolved": self.resolved, "check": self.check,
-                "remaining": [f["title"] for f in self.remaining]}
+                "remaining": [f["title"] for f in self.remaining], "snapshot": self.snapshot}
 
 
 def _norm(texto):
@@ -210,11 +235,21 @@ _RE_CONHECIMENTO = re.compile(
     r"^\s*(?:o\s+que\s+(?:e|eh|sao|significa|quer\s+dizer)|que\s+e|o\s+que\s+faz|"
     r"para\s+que\s+serve|pra\s+que\s+serve|como\s+funciona|quem\s+(?:e|foi)|"
     r"qual\s+(?:e\s+)?a\s+diferenca|(?:me\s+)?expli(?:que|ca)|defina|"
-    r"(?:me\s+)?(?:faca|faz|crie|cria|escreva|escreve|gere|gera|monte|monta)\s+(?:um|uma|o|a)\b)")
+    r"(?:me\s+)?(?:faca|faz|crie|cria|escreva|escreve|gere|gera|monte|monta)\s+(?:um|uma|o|a)\b|"
+    r"como\s+(?:eu\s+|se\s+|posso\s+|devo\s+|faco\s+para\s+)?(?:faco|faz|instal[oa]r?|habilit[oa]r?|"
+    r"ativ[oa]r?|desativ[oa]r?|configur[oa]r?|mud[oa]r?|troc[oa]r?|remov[oa]r?|desinstal[oa]r?|"
+    r"atualiz[oa]r?|us[oa]r?|cri[oa]r?|adicion[oa]r?|coloc[oa]r?|vej[oa]|ver|reinici[oa]r?|"
+    r"inici[oa]r?|compil[oa]r?|empacot[oa]r?|limp[oa]r?|refaz(?:er|o)?)\b|"
+    r"qual\s+(?:e\s+)?o\s+comando)")
 _RE_CODIGO = re.compile(r"\b(?:script|codigo|programa\s+em|funcao\s+(?:em|que)|regex|"
                         r"one-?liner|alias)\b")
 _RE_PESSOAL = re.compile(r"\b(?:meu|minha|meus|minhas|aqui|nesta|neste|nessa|nesse|esse\s+erro|"
                          r"este\s+erro|deu|dando|nao\s+funciona|parou|travou|travando)\b")
+
+
+_RE_EXPLIQUE = re.compile(r"^\s*(?:me\s+)?(?:explique|explica|o\s+que\s+faz)\s+(?:o\s+|este\s+|esse\s+|"
+                          r"a\s+|esta\s+|essa\s+)?(?:comando|erro|mensagem)\s*:?\s*(.+)$",
+                          re.S | re.I)
 
 
 def _conhecimento(texto):
@@ -233,9 +268,22 @@ _TOOL_DOMAINS = {
     "audio": {"audio", "services"},
     "bluetooth": {"bluetooth", "services"},
     "system": {"system", "hardware", "boot"},
+    "graphics": {"graphics", "hardware"},
+    "boot": {"boot", "packages"},
+    "logs": {"logs", "services"},
 }
 _TOOLS_BASE = ("system.info", "system.memory", "system.processes", "system.log",
-               "service.status", "pkg.search", "pkg.info", "pkg.install")
+               "service.status", "pkg.search", "pkg.info", "pkg.install", "kb.search")
+
+
+def _documentacao(texto, limite=1800):
+    """Trechos da base local relevantes para a pergunta, já no formato do prompt."""
+    try:
+        trechos = kb.contexto(texto, limite_chars=limite)
+    except Exception:  # a base nunca derruba a pergunta
+        log.exception("falha na base de conhecimento")
+        trechos = ""
+    return DOC_PROMPT.format(trechos=trechos) if trechos else ""
 
 
 class _Relogio:
@@ -452,10 +500,18 @@ class Agent:
     # -- pergunta livre ---------------------------------------------------------
 
     def ask(self, text, use_llm=True):
+        m = _RE_EXPLIQUE.match(text)
+        if m:
+            return self.explain(m.group(1), use_llm)
+        if text.lstrip().startswith("$ ") or ("\n" in text.strip() and explain.parece_erro(text)):
+            return self.explain(text, use_llm)
         ok, msg = self.llm_status() if use_llm else (False, "IA desativada")
         if ok:
             return self.investigate(text)
         termo = _termo_pergunta(text)
+        docs = kb.search(text)
+        if docs and (_conhecimento(text) or not self.classify(text)):
+            return self._da_documentacao(text, docs, msg)
         if termo:
             return self._explicar_termo(text, termo, msg)
         dominios = self.classify(text)
@@ -473,6 +529,76 @@ class Agent:
         rep.summary = ("Para perguntas livres eu preciso da IA configurada. Sem ela, faço o "
                        "check-up e os diagnósticos prontos: rede, disco, pacotes, serviços, áudio, "
                        "Bluetooth, memória e CPU.")
+        return rep
+
+    # -- EXPLICAR um comando ou erro colado ------------------------------------------
+
+    def explain(self, texto, use_llm=True):
+        """Explica um comando (o que faz e se é perigoso) ou uma mensagem de erro.
+        Nada do texto é executado."""
+        texto = (texto or "").strip()[:4000]
+        rep = self._novo(texto, "explain", "regras")
+        self.emit("tool", "an", "Analisando o texto (nada é executado)…")
+        a = explain.analisar(texto)
+        rep.state = {"explain": a}
+        rep.context = context.collect()
+        self.emit("tool", "an", "Analisando o texto", "ok",
+                  f"{a['tipo']}: {a['nivel']}" if a["tipo"] == "comando" else
+                  f"{len(a['erros'])} erro(s) conhecido(s)")
+        sev = {"perigoso": "erro", "cuidado": "aviso"}
+        for r in a["riscos"]:
+            rep.findings.append({"code": f"risco:{r['motivo'][:40]}", "severity": sev[r["nivel"]],
+                                 "title": f"{r['nivel'].capitalize()}: {r['motivo']}", "detail": "",
+                                 "step": "", "confirmed": True, "suggestions": []})
+        for c in a["comandos"]:
+            det = c["descricao"] or ("não instalado" if not c["instalado"] else "")
+            if c["pacote"]:
+                det += f" (pacote {c['pacote']})"
+            rep.findings.append({"code": f"cmd:{c['nome']}", "severity": "info",
+                                 "title": c["nome"], "detail": det.strip(), "step": "",
+                                 "confirmed": True, "suggestions": []})
+        for e in a["erros"]:
+            rep.findings.append({"code": f"erro:{e['titulo']}", "severity": "aviso",
+                                 "title": e["titulo"], "detail": e["explicacao"], "step": "",
+                                 "confirmed": True, "suggestions": e["sugestoes"]})
+        if a["tipo"] == "comando":
+            rep.summary = {"perigoso": "⚠️ Comando PERIGOSO — não execute sem entender",
+                           "cuidado": "Comando que exige cuidado"}.get(
+                a["nivel"], "Nenhum risco conhecido neste comando")
+        else:
+            rep.summary = a["erros"][0]["titulo"] if a["erros"] else "Mensagem de erro"
+
+        ok, msg = self.llm_status() if use_llm else (False, "IA desativada")
+        if not ok:
+            rep.llm_error = msg if self.provider.name != "none" else ""
+            rep.needs_ai = not a["erros"] and not a["riscos"]
+            rep.session_path = history.save_session(rep.to_dict(with_state=False)) or ""
+            return rep
+
+        c = rep.context
+        ctx = f"{c['distro']['name']}, kernel {c['kernel']}, {c['arch']}"
+        prompt = EXPLAIN_PROMPT.format(
+            tipo="comando" if a["tipo"] == "comando" else "mensagem de erro",
+            tarefa=_TAREFA[a["tipo"]], analise=_compacto(a, 1500), contexto=ctx,
+            documentacao=_documentacao(texto, 1200))
+        final = self._responder_direto(rep, texto, ctx, sistema=prompt)
+        final.domain = "explain"            # os riscos (findings) continuam no relatório
+        return final
+
+    def _da_documentacao(self, text, docs, msg):
+        """Sem IA: responde com os trechos da base local (Void Handbook, vinstall, pkgmake...)."""
+        rep = self._novo(text, "info", "regras")
+        rep.llm_error = msg if self.provider.name != "none" else ""
+        self.emit("tool", "kb", "Consultando a documentação do VoidBR", "ok",
+                  f"{len(docs)} trecho(s)")
+        rep.summary = f"Da documentação: {docs[0]['titulo']}"
+        for d in docs:
+            rep.findings.append({"code": f"kb:{d['arquivo']}:{d['titulo']}", "severity": "info",
+                                 "title": d["titulo"], "detail": d["texto"], "step": "",
+                                 "confirmed": True,
+                                 "suggestions": [f"Fonte: {d['fonte']}"] if d["fonte"] else []})
+        rep.needs_ai = True
+        rep.session_path = history.save_session(rep.to_dict(with_state=False)) or ""
         return rep
 
     def _explicar_termo(self, text, termo, msg):
@@ -561,7 +687,7 @@ class Agent:
         extra = _TOOLS_BASE if tdom else ()
         acoes_nomes = [t.name for t in self.registry.llm_tools("action", tdom, extra)]
         sistema = INVESTIGATE_PROMPT.format(catalogo=self.registry.action_catalog(tdom, extra),
-                                            contexto=ctx)
+                                            contexto=ctx, documentacao=_documentacao(text, 1200))
         ferramentas = self.registry.llm_schemas(tdom, extra) + [_responder_schema(acoes_nomes)]
         log.info("IA: %d ferramenta(s) (%s)", len(ferramentas) - 1,
                  ", ".join(sorted(tdom)) if tdom else "todas")
@@ -648,10 +774,12 @@ class Agent:
                 rep.actions.append(a)
         return self._fechar(rep, text)
 
-    def _responder_direto(self, rep, text, ctx):
+    def _responder_direto(self, rep, text, ctx, sistema=None):
         """Pergunta de conhecimento: resposta em texto, sem ferramentas, mostrada
         conforme a IA escreve (eventos "stream")."""
-        msgs = [{"role": "system", "content": KNOWLEDGE_PROMPT.format(contexto=ctx)},
+        rep.mode, rep.provider = "llm", self.provider.describe()
+        sistema = sistema or KNOWLEDGE_PROMPT.format(contexto=ctx, documentacao=_documentacao(text))
+        msgs = [{"role": "system", "content": sistema},
                 *self.history[-6:], {"role": "user", "content": text}]
         rotulo = "🧠 Pensando…"
         self.emit("llm", "think1", rotulo)
@@ -704,6 +832,42 @@ class Agent:
         rep.tool_calls.append({"tool": call["name"], "args": call["arguments"], "result": res})
         return _compacto(res)
 
+    def load_session(self, path):
+        """Reabre uma sessão do histórico como Report (para ver, exportar e continuar a
+        conversa). As ações são validadas de novo no Tool Registry; as que não valem mais
+        (ex: pacote já instalado) não voltam."""
+        import json as _json
+        with open(path, encoding="utf-8") as f:
+            d = _json.load(f)
+        rep = Report(question=d.get("question", ""), domain=d.get("domain", ""),
+                     mode=d.get("mode", "regras"), context=d.get("context") or {},
+                     findings=d.get("findings") or [], llm=d.get("llm"),
+                     llm_error=d.get("llm_error", ""), provider=d.get("provider", ""),
+                     summary=d.get("summary", ""), time=d.get("time", ""), session_path=path,
+                     tool_calls=[{**c, "result": None} for c in d.get("tool_calls") or []],
+                     executions=d.get("executions") or [])
+        rep.state = {"_redact": d.get("redact") or []}
+        feitas = {(e.get("action") or {}).get("id") for e in rep.executions if e.get("ok")}
+        for a in d.get("actions") or []:
+            if a.get("id") in feitas:
+                continue
+            try:
+                rep.actions.append(self.registry.make_action(
+                    a.get("tool", ""), a.get("args") or {}, reason=a.get("reason", ""),
+                    fixes=a.get("fixes") or [], source=a.get("source", "regras")))
+            except ValueError:
+                pass
+        resumo = rep.summary + ("\n" + rep.llm["explicacao"] if rep.llm and rep.llm.get("explicacao") else "")
+        self.history = [{"role": "user", "content": rep.question},
+                        {"role": "assistant", "content": resumo[:1500]}]
+        return rep
+
+    def report_markdown(self, rep):
+        """Relatório para compartilhar (dados pessoais ocultos)."""
+        d = rep.to_dict(with_state=False)
+        d["redact"] = sorted(set(d.get("redact") or []) | set((rep.state or {}).get("_redact", [])))
+        return report.markdown(d, {"ssid_list": [{"ssid": s} for s in d["redact"]]})
+
     def _fechar(self, rep, text):
         resumo = rep.summary
         if rep.llm and rep.llm.get("explicacao"):
@@ -723,10 +887,14 @@ class Agent:
         def linha(t):
             self.emit("output", "out", t[-160:], "info")
 
-        res = self.registry.execute(action, confirmed=confirmed, on_line=linha)
+        res = self.registry.execute(action, confirmed=confirmed, on_line=linha,
+                                    snapshot=bool(self.cfg.get("agent", {}).get("snapshot", True)))
         saida = "\n".join(x for x in (res.get("out"), res.get("err")) if x)
         r = ExecResult(action=action, ok=res.get("ok", False), output=saida,
-                       cancelled=res.get("cancelled", False))
+                       cancelled=res.get("cancelled", False), snapshot=res.get("snapshot"))
+        if r.snapshot:
+            self.emit("verify", "snap", f"📸 Snapshot {r.snapshot} do sistema criado antes da mudança",
+                      "ok", "dá para desfazer pelo Gerenciador de snapshots")
         if r.cancelled:
             self.emit("verify", "exec", "Autenticação cancelada — nada foi alterado", "warn")
             return self._registrar(report, r)

@@ -9,6 +9,11 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.3.0 (2026-09-30): snapshot antes de ações de risco (voidbr-snapper-manager)
+#     com "Desfazer"; não roda como root; documentação local do Void/VoidBR para a
+#     IA; explicar comando ou erro (--explain); diagnósticos de vídeo/Wayland, boot
+#     e logs; relatório para compartilhar (--report); histórico reaberto na GUI;
+#     avisos em segundo plano (--monitor).
 #   - v0.2.4 (2026-09-30): Configurações da IA na GUI: opção Gemini, campo para colar a
 #     chave (gravada à parte, chmod 600), buscar modelos, testar, e ajustes do Ollama
 #     (contexto, manter carregado, modo pensando).

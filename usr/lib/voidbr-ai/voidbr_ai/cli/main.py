@@ -25,6 +25,7 @@ import sys
 from .. import APP_NAME, APP_VERSION, config, history, setup, tools
 from ..agent import Agent
 from ..providers import ProviderError
+from ..util import ROOT_MSG, rodando_como_root
 
 red = yellow = green = blue = cyan = bold = dim = reset = ""
 
@@ -87,7 +88,8 @@ def mostrar(rep):
         fatos = [f for f in rep.findings if f.get("confirmed", True)]
         hips = [f for f in rep.findings if not f.get("confirmed", True)]
         if fatos:
-            print(f"\n{bold}🔎 Encontrado nos dados:{reset}")
+            print(f"\n{bold}" + ("🔍 Análise automática:" if rep.domain == "explain"
+                                  else "🔎 Encontrado nos dados:") + reset)
             for f in fatos:
                 print(f"  • {f['title']}")
         if hips:
@@ -101,12 +103,16 @@ def mostrar(rep):
     elif rep.domain == "info":
         print(f"{bold}{cyan}📖 {rep.summary}{reset}")
         for f in rep.findings:
-            print(f"  • {f['title']}" + (f"\n     {dim}{f['detail']}{reset}" if f["detail"] else ""))
+            det = f["detail"].replace("\n", "\n     ")
+            print(f"  • {f['title']}" + (f"\n     {dim}{det}{reset}" if det else ""))
             for s in f.get("suggestions", []):
                 print(f"     → {s}")
     else:
-        print(f"{bold}🩺 Diagnóstico:{reset} {rep.summary}")
-        print(f"\n{bold}🔎 O que foi encontrado (confirmado pelos dados):{reset}")
+        if rep.domain == "explain":
+            print(f"{bold}🔍 Análise (nada foi executado):{reset} {rep.summary}\n")
+        else:
+            print(f"{bold}🩺 Diagnóstico:{reset} {rep.summary}")
+            print(f"\n{bold}🔎 O que foi encontrado (confirmado pelos dados):{reset}")
         for f in rep.findings:
             cor = {"erro": red, "aviso": yellow, "ok": green}.get(f["severity"], cyan)
             hip = f" {dim}[hipótese]{reset}" if not f.get("confirmed", True) else ""
@@ -168,6 +174,10 @@ def oferecer_acoes(agent, rep):
         print("\033[2K", end="", file=sys.stderr)
         if r.cancelled:
             continue
+        if r.snapshot:
+            print(f"\n📸 Snapshot {r.snapshot} criado antes da mudança. Para desfazer: "
+                  f"{cyan}voidbr-snapper-manager-gui{reset} "
+                  f"{dim}(ou sudo voidbr-snapper-manager restore {r.snapshot}; pede reinício){reset}")
         if not r.ok:
             print(f"\n{red}❌ Falhou:{reset}\n{dim}{r.output[-1500:]}{reset}")
             continue
@@ -259,11 +269,20 @@ def main(argv=None):
     p.add_argument("-d", "--diagnose", metavar="DOMINIO",
                    choices=sorted(tools.DOMAINS) + sorted(tools.ALIASES),
                    help="diagnóstico de um domínio: " + ", ".join(tools.DOMAINS))
+    p.add_argument("-e", "--explain", metavar="TEXTO",
+                   help="explica um comando ou mensagem de erro, sem executar ('-' lê da entrada)")
     p.add_argument("--json", action="store_true", help="saída em JSON (sem perguntas)")
+    p.add_argument("-r", "--report", action="store_true",
+                   help="saída como relatório em Markdown para colar num fórum/grupo "
+                        "(dados pessoais ocultos)")
     p.add_argument("--no-llm", action="store_true", help="não usar a IA (só regras)")
     p.add_argument("--provider", choices=["none", "ollama", "openai"], help="sobrescreve a config")
     p.add_argument("--model", help="sobrescreve o modelo do provider")
     p.add_argument("--setup-ai", action="store_true", help="configura a IA local (Ollama)")
+    p.add_argument("--monitor", action="store_true",
+                   help="avisos em segundo plano: check-up leve periódico com notificação")
+    p.add_argument("--monitor-once", action="store_true",
+                   help="uma checagem do monitor agora (avisa mesmo o que já foi avisado)")
     p.add_argument("--list-tools", action="store_true", help="lista as ferramentas e ações")
     p.add_argument("--list-models", action="store_true",
                    help="lista os modelos que o provider (e a chave) pode usar")
@@ -271,6 +290,9 @@ def main(argv=None):
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("-V", "--version", action="version", version=f"{APP_NAME} {APP_VERSION}")
     a = p.parse_args(argv)
+    if rodando_como_root():
+        print(f"❌ {ROOT_MSG}\n   Ex: voidbr-ai \"minha pergunta\"   (sem sudo)", file=sys.stderr)
+        return 1
 
     cores(sys.stdout.isatty() and not a.json and not os.environ.get("NO_COLOR"))
     cfg = config.load()
@@ -280,12 +302,20 @@ def main(argv=None):
         cfg[cfg["provider"]]["model"] = a.model
     history.setup_logging(cfg.get("log", {}).get("level", "info"), a.verbose)
 
-    agent = Agent(cfg, on_event=Saida(silencioso=a.json))
+    agent = Agent(cfg, on_event=Saida(silencioso=a.json or a.report))
     use_llm = not a.no_llm
 
     if a.list_tools:
         listar_ferramentas(agent)
         return 0
+    if a.monitor or a.monitor_once:
+        from .. import monitor
+        agent.on_event = lambda ev: None
+        if a.monitor_once:
+            novos = monitor.uma_vez(agent, forcar=True)
+            print(f"{len(novos)} problema(s) avisado(s)" if novos else "nenhum problema encontrado")
+            return 0
+        return monitor.loop(agent)
     if a.list_models:
         return listar_modelos(agent)
     if a.history:
@@ -295,7 +325,17 @@ def main(argv=None):
     if a.setup_ai:
         return assistente_ia(agent)
 
-    interativo = sys.stdin.isatty() and not a.json
+    interativo = sys.stdin.isatty() and not a.json and not a.report
+    if a.explain:
+        texto = sys.stdin.read() if a.explain == "-" else a.explain
+        rep = agent.explain(texto, use_llm=use_llm)
+        if a.report:
+            print(agent.report_markdown(rep))
+        elif a.json:
+            print(json.dumps(rep.to_dict(), ensure_ascii=False, indent=2, default=str))
+        else:
+            mostrar(rep)
+        return 0
     if a.diagnose or a.pergunta or a.checkup:
         if a.checkup:
             rep = agent.checkup(use_llm=use_llm)
@@ -303,7 +343,9 @@ def main(argv=None):
             rep = agent.diagnose(a.diagnose, use_llm=use_llm)
         else:
             rep = agent.ask(" ".join(a.pergunta), use_llm=use_llm)
-        if a.json:
+        if a.report:
+            print(agent.report_markdown(rep))
+        elif a.json:
             d = rep.to_dict()
             mod = tools.DOMAINS.get(rep.domain)
             if mod and hasattr(mod, "network_status"):

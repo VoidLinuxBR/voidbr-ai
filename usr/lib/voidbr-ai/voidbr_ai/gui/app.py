@@ -38,6 +38,9 @@ Mesmo visual do voidbr-iso-writer e do voidbr-snapper-manager-gui.
 
 import json
 import os
+import shutil
+import subprocess
+import sys
 import threading
 import time
 
@@ -343,7 +346,9 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         menu = Gio.Menu()
         menu.append("🦙 Configurar IA local (Ollama)", "win.ia")
         menu.append("⚙️ Configurações da IA", "win.configuracoes")
+        menu.append("📋 Explicar comando ou erro…", "win.explicar")
         menu.append("🗂️ Histórico", "win.historico")
+        menu.append("🔔 Avisos em segundo plano…", "win.avisos")
         menu.append("🧰 Ferramentas disponíveis", "win.ferramentas")
         menu.append("ℹ️ Sobre / Créditos", "win.sobre")
         botao_menu = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
@@ -356,6 +361,8 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         for nome, cb in (("ia", self.ao_clicar_ia),
                          ("configuracoes", self.ao_clicar_configuracoes),
                          ("historico", self.ao_clicar_historico),
+                         ("explicar", self.ao_clicar_explicar),
+                         ("avisos", self.ao_clicar_avisos),
                          ("ferramentas", self.ao_clicar_ferramentas),
                          ("sobre", self.ao_clicar_sobre)):
             acao = Gio.SimpleAction.new(nome, None)
@@ -596,20 +603,133 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             self.entrada.set_text("")
             self.perguntar_agent(texto)
 
-    def perguntar_agent(self, texto, domain=None, checkup=False):
+    def ao_clicar_avisos(self, *_):
+        """Liga/desliga o monitor (check-up leve periódico com notificação)."""
+        from .. import monitor
+        m = self.cfg.get("monitor", {})
+        dlg = Gtk.Window(title="Avisos em segundo plano", transient_for=self, modal=True,
+                         default_width=560)
+        caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                        margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+        titulo = Gtk.Label(label="🔔 Avisos em segundo plano", xalign=0)
+        titulo.add_css_class("titulo-app")
+        caixa.append(titulo)
+        caixa.append(self._label(
+            "De tempos em tempos o VoidBR AI faz um check-up leve (disco, atualizações, serviços "
+            "parados, boot) e avisa com uma notificação se aparecer um problema novo. Só lê o "
+            "sistema: nada é alterado sem você. A busca por atualizações consulta os "
+            "repositórios (internet).", "detalhe", False))
+        grade = Gtk.Grid(column_spacing=12, row_spacing=10)
+        ligado = Gtk.Switch(active=bool(m.get("enabled")), halign=Gtk.Align.START)
+        grade.attach(Gtk.Label(label="Ativar os avisos:", xalign=0), 0, 0, 1, 1)
+        grade.attach(ligado, 1, 0, 1, 1)
+        horas = Gtk.SpinButton.new_with_range(1, 48, 1)
+        horas.set_value(float(m.get("interval_hours", 6)))
+        grade.attach(Gtk.Label(label="Checar a cada (horas):", xalign=0), 0, 1, 1, 1)
+        grade.attach(horas, 1, 1, 1, 1)
+        caixa.append(grade)
+        desk = (os.environ.get("XDG_CURRENT_DESKTOP") or "").lower()
+        if "hyprland" in desk or not shutil.which("notify-send"):
+            nota = []
+            if "hyprland" in desk:
+                nota.append("No Hyprland, para iniciar junto com a sessão, adicione ao "
+                            "<tt>~/.config/hypr/hyprland.conf</tt>:\n<tt>exec-once = voidbr-ai --monitor</tt>")
+            if not shutil.which("notify-send"):
+                nota.append("⚠️ Falta o <tt>notify-send</tt> (pacote <b>libnotify</b>) e um serviço de "
+                            "notificações (mako, dunst, swaync…).")
+            caixa.append(self._label("\n\n".join(nota), "detalhe"))
+        resultado = self._label("", "detalhe")
+        caixa.append(resultado)
+
+        def testar(b):
+            b.set_sensitive(False)
+            resultado.set_markup("⏳ Checando…")
+
+            def trabalho():
+                ag = Agent(self.cfg)
+                try:
+                    novos = monitor.uma_vez(ag, forcar=True)
+                    msg = (f"✅ {len(novos)} problema(s) — veja a notificação." if novos
+                           else "✅ Nenhum problema agora (nenhuma notificação).")
+                except Exception as e:
+                    msg = f"❌ {e}"
+                GLib.idle_add(lambda: (resultado.set_markup(esc(msg)), b.set_sensitive(True)) and False)
+            threading.Thread(target=trabalho, daemon=True).start()
+
+        def salvar(*_):
+            on = ligado.get_active()
+            try:
+                config.save_user({"monitor": {"enabled": on, "interval_hours": int(horas.get_value())}})
+                monitor.autostart(on)
+                if on:
+                    monitor.parar()     # reinicia com o intervalo novo
+                    monitor.iniciar()
+                else:
+                    monitor.parar()
+            except OSError as e:
+                self.erro("Não foi possível salvar", str(e))
+                return
+            self.cfg = config.load()
+            dlg.close()
+
+        linha = Gtk.Box(spacing=8, homogeneous=True)
+        linha.append(self._botao("🧪 Checar agora", "botao-azul", testar))
+        linha.append(self._botao("❌ Cancelar", "botao-cinza", lambda *_: dlg.close()))
+        linha.append(self._botao("💾 Salvar", "botao-verde", salvar))
+        caixa.append(linha)
+        dlg.set_child(caixa)
+        dlg.present()
+
+    def ao_clicar_explicar(self, *_):
+        """Cola um comando ou uma mensagem de erro: explica sem executar nada."""
+        if self.ocupado:
+            return
+        dlg = Gtk.Window(title="Explicar comando ou erro", transient_for=self, modal=True,
+                         default_width=640, default_height=360)
+        caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                        margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
+        caixa.append(self._label("📋 Cole um <b>comando</b> (ex: achado num fórum) ou uma "
+                                 "<b>mensagem de erro</b>. Nada é executado: o VoidBR AI só lê, "
+                                 "explica e avisa se é perigoso.", "detalhe", False))
+        tv = Gtk.TextView(monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8,
+                          right_margin=8, top_margin=8, bottom_margin=8)
+        rol = Gtk.ScrolledWindow(vexpand=True)
+        rol.set_child(tv)
+        rol.add_css_class("cartao")
+        caixa.append(rol)
+        linha = Gtk.Box(spacing=8, homogeneous=True)
+        linha.append(self._botao("❌ Cancelar", "botao-cinza", lambda *_: dlg.close()))
+
+        def ir(*_):
+            buf = tv.get_buffer()
+            texto = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False).strip()
+            if texto:
+                dlg.close()
+                self.perguntar_agent(texto, explicar=True)
+        linha.append(self._botao("🔍 Explicar", "botao-azul", ir))
+        caixa.append(linha)
+        dlg.set_child(caixa)
+        dlg.present()
+        tv.grab_focus()
+
+    def perguntar_agent(self, texto, domain=None, checkup=False, explicar=False):
         bolha = Gtk.Box(halign=Gtk.Align.END)
         bolha.add_css_class("bolha-usuario")
         bolha.append(self._label(f"🧑 {esc(texto)}"))
         self.adicionar(bolha)
 
-        self.passos = CartaoPassos("🩺 Check-up do sistema" if checkup else "🔎 Investigando a máquina")
+        self.passos = CartaoPassos("🩺 Check-up do sistema" if checkup else
+                                   "🔍 Analisando (nada é executado)" if explicar else
+                                   "🔎 Investigando a máquina")
         self.adicionar(self.passos)
         self.set_ocupado(True)
         self.agent.on_event = self._ao_evento
 
         def trabalho():
             try:
-                if checkup:
+                if explicar:
+                    rep = self.agent.explain(texto)
+                elif checkup:
                     rep = self.agent.checkup()
                 elif domain:
                     rep = self.agent.diagnose(domain, question=texto)
@@ -633,7 +753,9 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             self.cartao_resposta(rep)
         else:
             self.cartao_diagnostico(rep, "🩺 Check-up geral" if rep.mode == "checkup" else
-                                    "📖 O que o sistema sabe" if rep.domain == "info" else "🩺 Diagnóstico")
+                                    "📖 O que o sistema sabe" if rep.domain == "info" else
+                                    "🔍 Análise (nada foi executado)" if rep.domain == "explain" else
+                                    "🩺 Diagnóstico")
         if rep.needs_ai:
             self.dica_ia()
         return False
@@ -668,7 +790,8 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         c.append(self._label(f"<span weight='bold'>🤖 {esc(rep.provider)}</span>  <span "
                              f"foreground='#9ca3af'><small>{len(rep.tool_calls)} consulta(s) ao "
                              "sistema</small></span>", selecionavel=False))
-        if rep.streamed:        # resposta direta/script: texto normal, código em monoespaçado
+        if rep.streamed or "\n" in rep.summary or len(rep.summary) > 240:
+            # resposta direta/script: texto normal, código em monoespaçado
             for parte in texto_com_codigo(rep.summary):
                 c.append(self._label(parte, "codigo" if parte.startswith("<tt>") else None))
         else:
@@ -678,7 +801,9 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         fatos = [f for f in rep.findings if f.get("confirmed", True)]
         hips = [f for f in rep.findings if not f.get("confirmed", True)]
         if fatos:
-            c.append(self._label("<b>🔎 Encontrado nos dados da máquina</b>", "subtitulo"))
+            c.append(self._label("<b>🔍 Análise automática (nada foi executado)</b>"
+                                 if rep.domain == "explain" else
+                                 "<b>🔎 Encontrado nos dados da máquina</b>", "subtitulo"))
             for f in fatos:
                 c.append(self._label(f"•  {esc(f['title'])}"))
         if hips:
@@ -726,13 +851,66 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             c.append(linha)
 
     def _detalhes(self, c, rep):
-        detalhes = self._botao("🔍 Ver detalhes", "botao-laranja",
-                               lambda *_: self.mostrar_texto(
-                                   "🔍 Dados coletados",
-                                   json.dumps(rep.to_dict(), ensure_ascii=False, indent=2,
-                                              default=str)))
-        detalhes.set_halign(Gtk.Align.START)
-        c.append(detalhes)
+        linha = Gtk.Box(spacing=8, halign=Gtk.Align.START)
+        linha.append(self._botao("🔍 Ver detalhes", "botao-laranja",
+                                 lambda *_: self.mostrar_texto(
+                                     "🔍 Dados coletados",
+                                     json.dumps(rep.to_dict(), ensure_ascii=False, indent=2,
+                                                default=str))))
+        linha.append(self._botao("📤 Relatório", "botao-cinza", lambda *_: self.exportar(rep)))
+        c.append(linha)
+
+    def exportar(self, rep):
+        """Relatório em Markdown para colar num fórum/grupo (dados pessoais ocultos)."""
+        texto = self.agent.report_markdown(rep)
+        dlg = Gtk.Window(title="Relatório para compartilhar", transient_for=self,
+                         default_width=760, default_height=560)
+        caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                        margin_top=14, margin_bottom=14, margin_start=14, margin_end=14)
+        caixa.append(self._label("📤 Pronto para colar num fórum, grupo ou issue. IP público, MAC, "
+                                 "nome da rede Wi-Fi, do usuário e da máquina foram ocultados. "
+                                 "Confira antes de enviar.", "detalhe", False))
+        tv = Gtk.TextView(monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8,
+                          right_margin=8, top_margin=8, bottom_margin=8)
+        tv.get_buffer().set_text(texto)
+        rol = Gtk.ScrolledWindow(vexpand=True)
+        rol.set_child(tv)
+        caixa.append(rol)
+        aviso = self._label("", "detalhe", False)
+        caixa.append(aviso)
+
+        def atual():
+            b = tv.get_buffer()
+            return b.get_text(b.get_start_iter(), b.get_end_iter(), False)
+
+        def copiar(*_):
+            self.get_clipboard().set(atual())
+            aviso.set_markup("✅ Copiado para a área de transferência.")
+
+        def salvar(*_):
+            fd = Gtk.FileDialog(title="Salvar relatório",
+                                initial_name=f"voidbr-ai-relatorio-{time.strftime('%Y%m%d-%H%M%S')}.md")
+
+            def fim(d, res):
+                try:
+                    arq = d.save_finish(res)
+                except GLib.Error:
+                    return          # cancelado
+                try:
+                    with open(arq.get_path(), "w", encoding="utf-8") as f:
+                        f.write(atual())
+                    aviso.set_markup(f"✅ Salvo em {esc(arq.get_path())}")
+                except OSError as e:
+                    aviso.set_markup(f"❌ {esc(str(e))}")
+            fd.save(dlg, None, fim)
+
+        linha = Gtk.Box(spacing=8, homogeneous=True)
+        linha.append(self._botao("❌ Fechar", "botao-cinza", lambda *_: dlg.close()))
+        linha.append(self._botao("💾 Salvar…", "botao-azul", salvar))
+        linha.append(self._botao("📋 Copiar", "botao-verde", copiar))
+        caixa.append(linha)
+        dlg.set_child(caixa)
+        dlg.present()
 
     def cartao_diagnostico(self, rep, titulo="🩺 Diagnóstico"):
         sev = {f["severity"] for f in rep.findings}
@@ -831,6 +1009,8 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
                 b.set_sensitive(False)
                 if b in self._botoes_acao:
                     self._botoes_acao.remove(b)
+        if r.snapshot:
+            self.cartao_snapshot(r.snapshot)
         if not r.ok:
             self.erro("O comando falhou", r.output or "sem saída")
             return False
@@ -845,6 +1025,30 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             linha.append(self._label(f"{icone}  <b>{esc(r.check)}</b>"))
             self.adicionar(linha)
         return False
+
+    def cartao_snapshot(self, num):
+        """Snapshot criado antes da ação: oferece desfazer pelo voidbr-snapper-manager."""
+        c = Gtk.Box(spacing=12)
+        c.add_css_class("cartao")
+        c.append(self._label(f"📸  <b>Snapshot {num}</b> do sistema criado antes da mudança.\n"
+                             "<small>Se algo der errado, dá para voltar a como estava.</small>"))
+        b = self._botao("↩️ Desfazer…", "botao-laranja", lambda *_: self.desfazer(num))
+        b.set_valign(Gtk.Align.CENTER)
+        b.set_hexpand(False)
+        c.append(b)
+        self.adicionar(c)
+
+    def desfazer(self, num):
+        gui = shutil.which("voidbr-snapper-manager-gui")
+        texto = (f"Para voltar o sistema ao snapshot {num}, restaure-o no Gerenciador de "
+                 "snapshots. A restauração troca o sistema inteiro pelo do snapshot e pede "
+                 "reinício; o que foi alterado no / depois dele se perde (a /home não muda).")
+        if gui:
+            self.perguntar("↩️ Desfazer a mudança?", texto + "\n\nAbrir o Gerenciador de snapshots?",
+                           "📸 Abrir", lambda: subprocess.Popen([gui], start_new_session=True))
+        else:
+            self.mostrar_texto("↩️ Desfazer a mudança",
+                               texto + f"\n\nNo terminal:\n\n    sudo voidbr-snapper-manager restore {num}\n")
 
     def ao_limpar(self, *_):
         if self.ocupado:
@@ -861,13 +1065,63 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
     # -- menu ----------------------------------------------------------------
 
     def ao_clicar_historico(self, *_):
-        itens = history.list_sessions(100)
+        """Sessões anteriores: abrir (ver, exportar e continuar a conversa)."""
+        itens = history.list_sessions(200)
         if not itens:
             self.erro("Nenhuma sessão no histórico ainda")
             return
-        linhas = [f"{s['time']}   {s['question']}\n    → {s['summary']}\n    {s['path']}\n"
-                  for s in itens]
-        self.mostrar_texto("🗂️ Histórico", "\n".join(linhas))
+        dlg = Gtk.Window(title="Histórico", transient_for=self, modal=True,
+                         default_width=720, default_height=560)
+        caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                        margin_top=14, margin_bottom=14, margin_start=14, margin_end=14)
+        titulo = Gtk.Label(label="🗂️ Histórico", xalign=0)
+        titulo.add_css_class("titulo-app")
+        caixa.append(titulo)
+        busca = Gtk.SearchEntry(placeholder_text="Filtrar…")
+        caixa.append(busca)
+        lista = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        lista.add_css_class("cartao")
+        for s in itens:
+            row = Gtk.ListBoxRow()
+            row.path = s["path"]
+            row.texto = f"{s['question']} {s['summary']}".lower()
+            b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=6,
+                        margin_bottom=6, margin_start=6, margin_end=6)
+            b.append(self._label(f"<small>{esc(s['time'])}</small>  <b>{esc(s['question'][:90])}</b>",
+                                 selecionavel=False))
+            b.append(self._label(f"<small>→ {esc(s['summary'][:140])}</small>", "detalhe", False))
+            row.set_child(b)
+            lista.append(row)
+        lista.set_filter_func(lambda r: busca.get_text().lower() in r.texto)
+        busca.connect("search-changed", lambda *_: lista.invalidate_filter())
+        rol = Gtk.ScrolledWindow(vexpand=True)
+        rol.set_child(lista)
+        caixa.append(rol)
+
+        def abrir(*_):
+            row = lista.get_selected_row()
+            if row is None:
+                return
+            try:
+                rep = self.agent.load_session(row.path)
+            except (OSError, ValueError) as e:
+                self.erro("Não foi possível abrir a sessão", str(e))
+                return
+            dlg.close()
+            aviso = Gtk.Box()
+            aviso.add_css_class("cartao")
+            aviso.append(self._label(f"🗂️ <b>Sessão de {esc(rep.time)}</b> reaberta do histórico. "
+                                     "<small>Pode continuar a conversa; as correções foram "
+                                     "conferidas de novo.</small>"))
+            self.adicionar(aviso)
+            self._ao_relatorio(rep, None)
+        lista.connect("row-activated", abrir)
+        linha = Gtk.Box(spacing=8, homogeneous=True)
+        linha.append(self._botao("❌ Fechar", "botao-cinza", lambda *_: dlg.close()))
+        linha.append(self._botao("📂 Abrir", "botao-azul", abrir))
+        caixa.append(linha)
+        dlg.set_child(caixa)
+        dlg.present()
 
     def ao_clicar_ferramentas(self, *_):
         reg = self.agent.registry
@@ -1268,6 +1522,10 @@ class AppVoidbrAI(Gtk.Application):
 
 
 def main():
+    from ..util import ROOT_MSG, rodando_como_root
+    if rodando_como_root():
+        print(f"voidbr-ai-gui: {ROOT_MSG}", file=sys.stderr)
+        return 1
     cfg = config.load()
     history.setup_logging(cfg.get("log", {}).get("level", "info"))
     app = AppVoidbrAI()

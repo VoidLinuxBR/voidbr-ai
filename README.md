@@ -22,8 +22,10 @@ Depois, verifica se resolveu de verdade.
 | | Sem IA | Com IA (Ollama local ou OpenAI) |
 |---|---|---|
 | **Check-up geral** | ✅ | ✅ (+ interpretação) |
-| **Diagnósticos prontos**: rede, disco, pacotes, serviços, áudio, Bluetooth, memória/CPU | ✅ | ✅ |
-| **Perguntas livres** ("como faço…", "por que…") | — | ✅ a IA consulta o sistema e responde |
+| **Diagnósticos prontos**: rede, disco, pacotes, serviços, áudio, Bluetooth, vídeo/Wayland, boot, logs, memória/CPU | ✅ | ✅ |
+| **"Como faço…"** | trechos da documentação local | ✅ resposta direta, com a documentação local |
+| **Explicar comando ou erro** (nada é executado) | riscos e erros conhecidos | ✅ explicação completa |
+| **Perguntas livres** ("por que…", "meu … não funciona") | — | ✅ a IA consulta o sistema e responde |
 | **Ações** (sempre com confirmação) | propostas pelas regras | propostas pela IA, validadas na lista branca |
 
 A **IA local** roda no seu computador com o [voidbr-ollama](https://github.com/voidlinuxbr/voidbr-ollama):
@@ -40,14 +42,40 @@ voidbr-ai                                   # conversa no terminal
 voidbr-ai "como instalo o steam?"
 voidbr-ai "faça um script que faça backup da pasta ~/Documentos"
 voidbr-ai --checkup                         # check-up geral
-voidbr-ai --diagnose audio                  # network, storage, packages, services,
-                                            # audio, bluetooth, system
+voidbr-ai --diagnose audio                  # network, storage, packages, services, audio,
+                                            # bluetooth, graphics, boot, logs, system
 voidbr-ai --diagnose network --json         # saída estruturada
 voidbr-ai --setup-ai                        # configura a IA local (Ollama)
 voidbr-ai --list-tools                      # ferramentas e ações disponíveis
 voidbr-ai --list-models                     # modelos que o provider/chave pode usar
+voidbr-ai --explain 'curl -s https://x.sh | sudo bash'   # explica sem executar
+sudo xbps-install -Su 2>&1 | voidbr-ai --explain -   # ou mande um erro pela entrada
+voidbr-ai --checkup --report                # relatório em Markdown p/ fórum (dados pessoais ocultos)
+voidbr-ai --monitor                         # avisos em segundo plano (notify-send)
 voidbr-ai --history                         # últimas sessões
 ```
+
+Não rode com `sudo`: a configuração e o histórico ficam na sua pasta, e as correções
+pedem a senha na hora (pkexec).
+
+## Recursos
+
+- **Snapshot antes de mexer:** com o [voidbr-snapper-manager](https://github.com/voidlinuxbr/voidbr-snapper-manager)
+  instalado e configurado, instalar/remover/atualizar pacotes, remover kernels e mexer no boot
+  criam um snapshot antes (nas ações do xbps, o próprio hook do snapper cria o par pre/post).
+  O cartão da ação mostra **↩️ Desfazer…**, que abre o Gerenciador de snapshots.
+  Desligar: `[agent] snapshot = false`.
+- **Documentação local:** trechos do Void Handbook e das ferramentas do VoidBR (vinstall,
+  vservice, pkgmake) em `/usr/share/voidbr-ai/kb/`. A IA recebe os trechos relevantes
+  (e erra menos com modelos pequenos); sem IA eles são mostrados direto.
+- **Explicar comando ou erro:** cole um comando (ex: achado num fórum) ou uma mensagem de
+  erro — ☰ → 📋 Explicar comando ou erro. Avisa o que é perigoso; nada é executado.
+- **Relatório para compartilhar:** botão **📤 Relatório** em cada resposta (ou `--report`):
+  Markdown pronto para colar, sem IP público, MAC, nome da rede Wi-Fi, usuário e máquina.
+- **Histórico:** ☰ → 🗂️ Histórico reabre uma sessão para ver, exportar e continuar a conversa.
+- **Avisos em segundo plano (opcional):** ☰ → 🔔 Avisos. Check-up leve periódico (disco,
+  atualizações, serviços, boot) com notificação só do que for novo. Precisa do `notify-send`
+  (libnotify) e de um serviço de notificações. No Hyprland: `exec-once = voidbr-ai --monitor`.
 
 ## Como funciona
 
@@ -140,7 +168,8 @@ ou numa variável de ambiente (`api_key_env`).
 
 ## Histórico
 
-`~/.local/share/voidbr-ai/`: `sessions/`, `diagnostics/` e `logs/voidbr-ai.log`.
+`~/.local/share/voidbr-ai/`: `sessions/`, `diagnostics/`, `logs/voidbr-ai.log` e
+`monitor.json` (o que os avisos já avisaram).
 Credenciais não são gravadas.
 
 ## Instalação
@@ -154,7 +183,7 @@ Para as ações, tenha um agente polkit rodando (no Hyprland: `hyprpolkitagent`)
 
 ## Estender
 
-Um domínio novo (vídeo, impressora…) é um módulo em `tools/` com `register(reg)` e, para
+Um domínio novo (impressora, …) é um módulo em `tools/` com `register(reg)` e, para
 funcionar sem IA, `STEPS`, `KEYWORDS`, `analyze(state, reg)` e `register_checks(reg)`,
 listado em `tools/__init__.py`. O Agent, a CLI e a GUI não mudam.
 

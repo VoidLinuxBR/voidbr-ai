@@ -75,3 +75,12 @@ def running_processes():
         if comm:
             nomes.add(comm.strip())
     return nomes
+
+
+ROOT_MSG = ("Não rode o VoidBR AI como root (sudo). Rode como o seu usuário: a configuração e o "
+            "histórico ficam na sua pasta, e as correções pedem a senha na hora (pkexec).")
+
+
+def rodando_como_root():
+    """True se é root e não foi liberado (VOIDBR_AI_ALLOW_ROOT=1, ex: em manutenção)."""
+    return os.geteuid() == 0 and os.environ.get("VOIDBR_AI_ALLOW_ROOT") != "1"

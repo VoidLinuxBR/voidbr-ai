@@ -407,20 +407,20 @@ def register(reg):
 
     reg.register(Tool("pkg.install", "Instalar pacotes",
                       "Instala pacotes do repositório (nomes exatos; confira com pkg.search).",
-                      a_install, kind="action", domain="packages", params={"packages": lista},
+                      a_install, kind="action", snapshot=True, domain="packages", params={"packages": lista},
                       required=["packages"], check=_c_install, title="Instalar {packages}",
                       preview=lambda packages: "xbps-install -Sy " + " ".join(packages),
                       verify=_v_install))
     reg.register(Tool("pkg.remove", "Remover pacotes",
                       "Remove pacotes instalados (falha se outro pacote depender deles).",
-                      a_remove, kind="action", domain="packages", params={"packages": lista},
+                      a_remove, kind="action", snapshot=True, domain="packages", params={"packages": lista},
                       required=["packages"], check=_c_remove, title="Remover {packages}",
                       preview=lambda packages: "xbps-remove -y " + " ".join(packages),
                       verify=_v_remove,
                       risk="Os programas desses pacotes deixam de funcionar."))
     reg.register(Tool("system.update", "Atualizar o sistema",
                       "Atualiza todos os pacotes (primeiro o xbps, depois o resto).", a_update,
-                      kind="action", domain="packages", title="Atualizar o sistema",
+                      kind="action", snapshot=True, domain="packages", title="Atualizar o sistema",
                       preview=lambda: "xbps-install -Syu xbps  &&  xbps-install -yu",
                       verify=_v_update,
                       risk="Pode demorar e baixar bastante. Se o kernel for atualizado, reinicie depois."))
@@ -431,11 +431,11 @@ def register(reg):
                       verify=_v_cache))
     reg.register(Tool("pkg.remove_orphans", "Remover pacotes órfãos",
                       "Remove dependências que nenhum pacote instalado usa mais.", a_orphans,
-                      kind="action", domain="packages", title="Remover pacotes órfãos",
+                      kind="action", snapshot=True, domain="packages", title="Remover pacotes órfãos",
                       preview=lambda: "xbps-remove -yo", verify=_v_orphans))
     reg.register(Tool("kernel.purge", "Remover kernels antigos",
                       "Remove os kernels antigos, mantendo o que está em uso (vkpurge).",
-                      a_kernel_purge, kind="action", domain="packages",
+                      a_kernel_purge, kind="action", snapshot=True, domain="packages",
                       title="Remover kernels antigos", preview=lambda: "vkpurge rm all",
                       verify=_v_kernels,
                       risk="O kernel em uso fica; os antigos saem do menu de boot."))

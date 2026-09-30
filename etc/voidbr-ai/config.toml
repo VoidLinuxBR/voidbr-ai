@@ -27,6 +27,11 @@ api_key_env = "OPENAI_API_KEY"
 api_key_file = ""
 timeout = 90
 
+[monitor]
+# avisos em segundo plano: voidbr-ai --monitor (a GUI liga em ☰ → Avisos em segundo plano)
+interval_hours = 6
+domains = ["storage", "packages", "services", "boot"]
+
 [network]
 ping_targets = ["1.1.1.1", "8.8.8.8"]
 dns_test_hosts = ["voidbr.org", "voidlinux.org"]
@@ -39,6 +44,9 @@ max_steps = 8
 # depois de uma correção, refaz o diagnóstico até o problema sumir
 verify_attempts = 4
 verify_interval = 4
+# snapshot do sistema antes de mexer em pacotes, kernel e boot
+# (precisa do voidbr-snapper-manager instalado e configurado)
+snapshot = true
 
 [tools]
 # ferramentas desativadas, ex: ["network.connectivity"]

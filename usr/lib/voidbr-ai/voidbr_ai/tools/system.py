@@ -13,9 +13,38 @@ import glob
 import os
 import re
 
+import grp
+import pwd
+
 from .. import context
 from ..util import read_file, run, which
+from .privileged import run_helper
 from .registry import P, Tool
+
+# grupos que o helper aceita (a mesma lista fechada do voidbr-ai-helper)
+GRUPOS = ["audio", "video", "render", "input", "bluetooth", "socklog", "_seatd", "network", "plugdev"]
+
+
+def a_add_group(group, on_line=None):
+    return run_helper("groups-add", group, timeout=60, on_line=on_line)
+
+
+def _v_group(group):
+    usuario = pwd.getpwuid(os.getuid()).pw_name
+    try:
+        ok = usuario in grp.getgrnam(group).gr_mem
+    except KeyError:
+        return False, f"o grupo {group} não existe"
+    return ok, (f"{usuario} está no grupo {group} (vale a partir do próximo login)" if ok
+                else f"{usuario} não entrou no grupo {group}")
+
+
+def _c_group(args):
+    try:
+        grp.getgrnam(args["group"])
+    except KeyError:
+        return f"o grupo {args['group']} não existe neste sistema"
+    return None
 
 # arquivos de configuração que o LLM pode ler
 PERMITIDOS = ("/etc/", "/proc/cmdline", "/boot/grub/grub.cfg", "/boot/efi/limine/",
@@ -235,6 +264,14 @@ def analyze(state, reg):
 
 
 def register(reg):
+    reg.register(Tool("user.add_group", "Adicionar você a um grupo",
+                      "Adiciona o usuário atual a um grupo do sistema (audio, video, render, input, "
+                      "bluetooth, socklog, _seatd, network, plugdev). Vale no próximo login.",
+                      a_add_group, kind="action", domain="system",
+                      params={"group": P("string", "grupo", enum=GRUPOS)}, required=["group"],
+                      check=_c_group, title="Adicionar você ao grupo {group}",
+                      preview=lambda group: f"gpasswd -a $USER {group}", verify=_v_group,
+                      risk="Vale a partir do próximo login (saia e entre de novo na sessão)."))
     reg.register(Tool("system.info", "Coletando informações do sistema",
                       "Distro, kernel, arquitetura, CPU, GPU, memória, desktop/sessão, init, "
                       "gerenciador de pacotes, firmware (UEFI/BIOS) e uptime.", t_info))

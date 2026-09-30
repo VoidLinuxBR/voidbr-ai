@@ -2,7 +2,7 @@
 #
 #   voidbr-ai-helper - ações privilegiadas do VoidBR AI (lista branca)
 #   Created: ter 29 set 2026 23:00:00 -04
-#   Updated: qua 30 set 2026 08:00:00 -04
+#   Updated: qua 30 set 2026 19:40:00 -04
 #
 #   Copyright (c) 2026, Vilmar Catafesta <vcatafesta@gmail.com>
 #   Assembled By Vilmar Catafesta for the VoidBR project.
@@ -11,6 +11,13 @@
 #   Chamado pelo VoidBR AI via pkexec (polkit: org.voidbr.ai.helper).
 #   NÃO é um shell: só aceita os verbos abaixo e valida cada argumento.
 #   O LLM nunca chega aqui diretamente; só depois que o usuário confirma.
+#
+#   Opção (antes do verbo):
+#     --snapshot DESCRIÇÃO              antes de ações de risco, cria um snapshot com o
+#                                       voidbr-snapper-manager (se instalado e configurado).
+#                                       Nas ações do xbps com os hooks do snapper instalados,
+#                                       o próprio hook cria o par pre/post: aqui só informa
+#                                       o número. Imprime "SNAPSHOT: N".
 #
 #   Verbos:
 #     service-start|stop|restart NOME   sv start|stop|restart NOME
@@ -28,8 +35,14 @@
 #     pkg-remove-orphans                xbps-remove -yo
 #     kernel-purge                      vkpurge rm all
 #     pipewire-conf   wireplumber|pulse ln -s <exemplo do Void> /etc/pipewire/pipewire.conf.d/
+#     kernel-reconfigure PACOTE         xbps-reconfigure -f linuxX.Y (refaz o initramfs)
+#     grub-update                       update-grub
+#     limine-update                     update-limine (se existir)
+#     groups-add      GRUPO             gpasswd -a <usuário que chamou> GRUPO (lista fechada)
 #
 #   ChangeLog:
+#   - 2026-09-30: --snapshot (voidbr-snapper-manager); kernel-reconfigure, grub-update,
+#     limine-update, groups-add.
 #   - 2026-09-30: qualquer serviço de /etc/sv; pacotes (instalar, remover,
 #     atualizar, limpar cache, órfãos); kernels antigos; rfkill bluetooth.
 #
@@ -85,8 +98,57 @@ wait_supervise() {
 	return 1
 }
 
+# ---------------------------------------------------------------------------
+# snapshot antes de ações de risco (voidbr-snapper-manager)
+# ---------------------------------------------------------------------------
+readonly snapper_mgr=/usr/bin/voidbr-snapper-manager
+readonly snapper_hook=/etc/xbps.d/hooks.d/00-voidbr-snapper-pre.hook
+snap_desc=""
+snap_after=0
+
+# último snapshot "pre" (criado pelo hook do xbps nesta transação)
+snapshot_latest_pre() {
+	local n
+	n=$("$snapper_mgr" list --csv 2>/dev/null | awk -F, '$2 == "pre" { n = $1 } END { if (n != "") print n }')
+	[[ $n =~ ^[0-9]+$ ]] && echo "SNAPSHOT: $n"
+}
+
+snapshot_before() {
+	local verb=$1 out n
+	[[ -x $snapper_mgr ]] || { echo "snapshot: voidbr-snapper-manager não instalado; seguindo sem snapshot"; return 0; }
+	case $verb in
+	pkg-install | pkg-remove | system-update | pkg-remove-orphans)
+		if [[ -f $snapper_hook ]]; then
+			snap_after=1    # o hook do xbps cria o par pre/post
+			return 0
+		fi
+		;;
+	esac
+	if out=$("$snapper_mgr" create "$snap_desc" 2>&1); then
+		n=$(tail -n1 <<<"$out")
+		[[ $n =~ ^[0-9]+$ ]] && echo "SNAPSHOT: $n"
+	else
+		echo "snapshot: não foi possível criar ($(tail -n1 <<<"$out")); seguindo sem snapshot"
+	fi
+}
+
+if [[ ${1:-} == --snapshot ]]; then
+	snap_desc=${2:-}
+	[[ $snap_desc =~ ^[A-Za-z0-9\ ._:/()+,-]{1,80}$ ]] || die "descrição de snapshot inválida"
+	shift 2 || die "falta a descrição do snapshot"
+fi
+
 verb=${1:-}
 shift || true
+
+case $verb in
+pkg-install | pkg-remove | system-update | pkg-remove-orphans | kernel-purge | kernel-reconfigure | grub-update | limine-update)
+	[[ -n $snap_desc ]] && snapshot_before "$verb"
+	;;
+esac
+
+# no fim de qualquer verbo que deu certo, informa o snapshot do hook
+trap '[[ $? -eq 0 && $snap_after -eq 1 ]] && snapshot_latest_pre' EXIT
 
 case $verb in
 service-start | service-stop | service-restart)
@@ -185,6 +247,38 @@ pipewire-conf)
 	mkdir -p /etc/pipewire/pipewire.conf.d || die "não foi possível criar /etc/pipewire/pipewire.conf.d"
 	ln -sf "$src" /etc/pipewire/pipewire.conf.d/ || die "não foi possível criar o link"
 	ok "ativado: /etc/pipewire/pipewire.conf.d/${src##*/}"
+	;;
+kernel-reconfigure)
+	[[ ${1:-} =~ ^linux[0-9]+\.[0-9]+$ ]] || die "pacote de kernel inválido: ${1:-} (ex: linux6.12)"
+	xbps-query "$1" >/dev/null 2>&1 || die "$1 não está instalado"
+	xbps-reconfigure -f "$1" || die "xbps-reconfigure -f $1 falhou"
+	ok "reconfigurado: $1 (initramfs refeito)"
+	;;
+grub-update)
+	command -v update-grub >/dev/null || die "update-grub não encontrado (pacote grub)"
+	update-grub || die "update-grub falhou"
+	ok "menu do GRUB atualizado"
+	;;
+limine-update)
+	cmd=""
+	for c in /usr/local/bin/update-limine /usr/bin/update-limine /usr/bin/limine-update; do
+		[[ -x $c ]] && { cmd=$c; break; }
+	done
+	[[ -n $cmd ]] || die "nenhum update-limine encontrado"
+	"$cmd" || die "$cmd falhou"
+	ok "menu do Limine atualizado"
+	;;
+groups-add)
+	case ${1:-} in
+	audio | video | render | input | bluetooth | socklog | _seatd | network | plugdev) ;;
+	*) die "grupo não permitido: ${1:-}" ;;
+	esac
+	getent group "$1" >/dev/null || die "o grupo $1 não existe"
+	[[ -n ${PKEXEC_UID:-} ]] || die "usuário que chamou desconhecido (rode via pkexec)"
+	user=$(getent passwd "$PKEXEC_UID" | cut -d: -f1)
+	[[ -n $user && $PKEXEC_UID -ne 0 ]] || die "usuário inválido"
+	gpasswd -a "$user" "$1" || die "não foi possível adicionar $user ao grupo $1"
+	ok "$user adicionado ao grupo $1 (vale a partir do próximo login)"
 	;;
 *)
 	die "verbo não permitido: ${verb:-<vazio>}"

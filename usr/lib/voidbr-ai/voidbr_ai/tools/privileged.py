@@ -16,8 +16,10 @@ de operações longas (instalar pacotes, atualizar o sistema).
 """
 
 import os
+import re
 import subprocess
 import threading
+import unicodedata
 
 # instalado: /usr/lib/voidbr-ai/voidbr-ai-helper
 # no repositório: <repo>/usr/lib/voidbr-ai/voidbr-ai-helper
@@ -56,9 +58,25 @@ def _stream(argv, timeout, on_line, env=None):
     return p.returncode, "\n".join(linhas[-60:]), estourou[0]
 
 
+# snapshot antes da ação (definido pelo Registry.execute na thread que executa)
+_local = threading.local()
+
+
+def set_snapshot(desc):
+    """Descrição do snapshot para o próximo run_helper desta thread (None = sem snapshot)."""
+    if desc:
+        t = unicodedata.normalize("NFKD", desc)
+        t = "".join(c for c in t if not unicodedata.combining(c))
+        t = re.sub(r"[^A-Za-z0-9 ._:/()+,-]", "", t).strip()[:80]
+        desc = t or None
+    _local.snapshot = desc
+
+
 def run_helper(verb, *args, timeout=600, on_line=None):
-    """Roda o helper (root) e devolve dict {ok, rc, out, err, cancelled}."""
-    argv = [HELPER, verb, *[str(a) for a in args]]
+    """Roda o helper (root) e devolve dict {ok, rc, out, err, cancelled, snapshot}."""
+    snap = getattr(_local, "snapshot", None)
+    _local.snapshot = None
+    argv = [HELPER, *(["--snapshot", snap] if snap else []), verb, *[str(a) for a in args]]
     if os.geteuid() != 0:
         argv = ["pkexec", *argv]
     rc, out, estourou = _stream(argv, timeout, on_line)
@@ -66,7 +84,9 @@ def run_helper(verb, *args, timeout=600, on_line=None):
         return {"ok": False, "rc": 124, "out": out, "err": "tempo esgotado", "cancelled": False}
     # pkexec: 126 = autenticação cancelada/negada, 127 = não autorizado
     cancelado = argv[0] == "pkexec" and rc in (126, 127) and "OK:" not in out
-    return {"ok": rc == 0, "rc": rc, "out": out.strip(), "err": "", "cancelled": cancelado}
+    m = re.search(r"^SNAPSHOT: (\d+)$", out, re.M)
+    return {"ok": rc == 0, "rc": rc, "out": out.strip(), "err": "", "cancelled": cancelado,
+            "snapshot": int(m.group(1)) if m else None}
 
 
 def run_user(argv, timeout=60, on_line=None):

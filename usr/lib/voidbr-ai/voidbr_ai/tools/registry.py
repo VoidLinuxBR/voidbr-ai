@@ -61,6 +61,7 @@ class Tool:
     risk: str = ""                                  # aviso extra na confirmação
     risk_for: Optional[Callable] = None             # args -> aviso (depende do argumento)
     verify: Optional[Callable] = None               # args -> (ok, mensagem)
+    snapshot: bool = False                          # snapshot do sistema antes (voidbr-snapper-manager)
     llm: bool = True                                # visível para o LLM
     internal: bool = False                          # recebe state/cfg (ferramentas do diagnóstico)
 
@@ -224,8 +225,11 @@ class Registry:
                       risk=(tool.risk_for(args) if tool.risk_for else "") or tool.risk,
                       source=source)
 
-    def execute(self, action, confirmed=False, on_line=None):
-        """Executa uma AÇÃO. Sem confirmed=True, recusa."""
+    def execute(self, action, confirmed=False, on_line=None, snapshot=True):
+        """Executa uma AÇÃO. Sem confirmed=True, recusa.
+
+        snapshot: nas ações marcadas (pacotes, kernel, boot), pede ao helper um snapshot
+        do sistema antes (se o voidbr-snapper-manager estiver instalado)."""
         if not confirmed:
             raise NotConfirmed(action.title)
         tool = self.get(action.tool)
@@ -234,9 +238,14 @@ class Registry:
         if tool.name in self.disabled:
             raise ToolDisabled(tool.name)
         args = tool.validate(action.args)       # valida de novo: nunca confia na proposta
-        if "on_line" in inspect.signature(tool.func).parameters:
-            return tool.func(on_line=on_line, **args)
-        return tool.func(**args)
+        from .privileged import set_snapshot
+        set_snapshot(f"voidbr-ai: {action.title}" if (snapshot and tool.snapshot and tool.root) else None)
+        try:
+            if "on_line" in inspect.signature(tool.func).parameters:
+                return tool.func(on_line=on_line, **args)
+            return tool.func(**args)
+        finally:
+            set_snapshot(None)
 
     def verify(self, action):
         tool = self.get(action.tool)

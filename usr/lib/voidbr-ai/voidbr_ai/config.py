@@ -54,6 +54,16 @@ DEFAULTS = {
         # (e o intervalo em segundos) até considerar o problema resolvido
         "verify_attempts": 4,
         "verify_interval": 4,
+        # snapshot do sistema antes de mexer em pacotes/kernel/boot
+        # (precisa do voidbr-snapper-manager instalado e configurado)
+        "snapshot": True,
+    },
+    "monitor": {
+        # avisos em segundo plano (voidbr-ai --monitor, iniciado com a sessão)
+        "enabled": False,
+        "interval_hours": 6,
+        "domains": ["storage", "packages", "services", "boot"],
+        "start_delay": 120,          # segundos depois do login antes da 1ª checagem
     },
     "tools": {
         "disabled": [],              # ex: ["network.connectivity"]
