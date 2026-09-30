@@ -37,6 +37,7 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from .. import APP_VERSION, config, context, history, tools
+from ..util import run
 from ..providers import ProviderError, get_provider
 
 log = logging.getLogger("voidbr-ai")
@@ -177,6 +178,18 @@ def parse_json(texto):
             except ValueError:
                 pass
     raise ProviderError("o modelo não respondeu em JSON válido")
+
+
+_RE_O_QUE_E = re.compile(
+    r"^\s*(?:o\s+que\s+(?:e|eh|significa)|que\s+e|para\s+que\s+serve|pra\s+que\s+serve|"
+    r"como\s+funciona|quem\s+e)\s+(?:o\s+|a\s+|os\s+|as\s+|um\s+|uma\s+)?"
+    r"([a-z0-9][a-z0-9._+-]*)\s*\??\s*$")
+
+
+def _termo_pergunta(texto):
+    """'o que é o ollama?' -> 'ollama' (só perguntas de uma palavra)."""
+    m = _RE_O_QUE_E.match(_norm(texto))
+    return m.group(1) if m else None
 
 
 def _compacto(obj, limite=5000):
@@ -372,6 +385,9 @@ class Agent:
         ok, msg = self.llm_status() if use_llm else (False, "IA desativada")
         if ok:
             return self.investigate(text)
+        termo = _termo_pergunta(text)
+        if termo:
+            return self._explicar_termo(text, termo, msg)
         dominios = self.classify(text)
         if dominios:
             if len(dominios) == 1:
@@ -387,6 +403,57 @@ class Agent:
         rep.summary = ("Para perguntas livres eu preciso da IA configurada. Sem ela, faço o "
                        "check-up e os diagnósticos prontos: rede, disco, pacotes, serviços, áudio, "
                        "Bluetooth, memória e CPU.")
+        return rep
+
+    def _explicar_termo(self, text, termo, msg):
+        """Sem IA: "o que é X?" respondido com o que o sistema sabe de X
+        (descrição do pacote no xbps, se o comando existe, whatis/man)."""
+        rep = self._novo(text, "", "regras")
+        rep.llm_error = msg if self.provider.name != "none" else ""
+        self.emit("tool", "t1", f"Buscando pacotes ({termo})…")
+        busca = self.registry.call("pkg.search", query=termo)
+        self.emit("tool", "t1", f"Buscando pacotes ({termo})", "ok",
+                  f"{busca.get('total', 0)} resultado(s)")
+        cmd = self.registry.call("system.command", name=termo)
+        w = run(["whatis", termo], timeout=5)
+        man = w["out"].splitlines()[0].strip() if w["rc"] == 0 and w["out"].strip() else ""
+
+        # o pacote com o nome exato vem primeiro, depois os que contêm o termo
+        res = busca.get("results", [])
+        res.sort(key=lambda r: (r["name"] != termo, termo not in r["name"], r["name"]))
+        principais = [r for r in res if termo in r["name"]][:5] or res[:3]
+        if principais:
+            p = principais[0]
+            rep.summary = f"{p['name']}: {p['desc']}"
+        elif man:
+            rep.summary = man
+        else:
+            rep.summary = (f"Não encontrei \"{termo}\" nos pacotes nem nos manuais do sistema. "
+                           "Com a IA configurada eu explico qualquer assunto.")
+        for r in principais:
+            estado = "instalado" if r["installed"] else "não instalado"
+            rep.findings.append({"code": f"pkg:{r['name']}", "severity": "info",
+                                 "title": f"{r['name']} ({estado})", "detail": r["desc"],
+                                 "step": "", "confirmed": True, "suggestions": []})
+        if cmd.get("path"):
+            rep.findings.append({"code": "cmd", "severity": "ok",
+                                 "title": f"O comando {termo} está instalado: {cmd['path']}",
+                                 "detail": f"pacote {cmd['package']}" if cmd.get("package") else "",
+                                 "step": "", "confirmed": True,
+                                 "suggestions": [f"Manual: man {termo}"] if man else []})
+        if man and principais:
+            rep.findings.append({"code": "man", "severity": "info", "title": man, "detail": "",
+                                 "step": "", "confirmed": True, "suggestions": []})
+        alvo = next((r for r in principais if not r["installed"]), None)
+        if alvo and alvo is principais[0]:
+            try:
+                rep.actions.append(self.registry.make_action(
+                    "pkg.install", {"packages": [alvo["name"]]}, reason="se quiser usar"))
+            except ValueError:
+                pass
+        rep.domain = "info"
+        rep.needs_ai = True
+        rep.session_path = history.save_session(rep.to_dict(with_state=False)) or ""
         return rep
 
     def _varios(self, text, dominios):

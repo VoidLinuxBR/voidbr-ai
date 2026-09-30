@@ -590,7 +590,8 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         elif not rep.domain:
             self.cartao_resposta(rep)
         else:
-            self.cartao_diagnostico(rep, "🩺 Check-up geral" if rep.mode == "checkup" else "🩺 Diagnóstico")
+            self.cartao_diagnostico(rep, "🩺 Check-up geral" if rep.mode == "checkup" else
+                                    "📖 O que o sistema sabe" if rep.domain == "info" else "🩺 Diagnóstico")
         if rep.needs_ai:
             self.dica_ia()
         return False

@@ -189,7 +189,7 @@ class Registry:
                 itens.append(f"- {t.name}({ps}): {t.description}")
         return "\n".join(itens)
 
-    def call(self, name, **kwargs):
+    def call(self, name, /, **kwargs):
         """Chama uma ferramenta de LEITURA (argumentos validados)."""
         tool = self.get(name)
         if tool is None:

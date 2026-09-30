@@ -85,6 +85,12 @@ def mostrar(rep):
             print(f"  → {s}")
     elif not rep.domain:
         print(f"{bold}{cyan}🤖 {rep.summary}{reset}")
+    elif rep.domain == "info":
+        print(f"{bold}{cyan}📖 {rep.summary}{reset}")
+        for f in rep.findings:
+            print(f"  • {f['title']}" + (f"\n     {dim}{f['detail']}{reset}" if f["detail"] else ""))
+            for s in f.get("suggestions", []):
+                print(f"     → {s}")
     else:
         print(f"{bold}🩺 Diagnóstico:{reset} {rep.summary}")
         print(f"\n{bold}🔎 O que foi encontrado (confirmado pelos dados):{reset}")
@@ -108,7 +114,7 @@ def mostrar(rep):
 
     if rep.llm_error and not l and rep.provider:
         print(f"\n{dim}🤖 IA: {rep.llm_error}{reset}")
-    if rep.needs_ai:
+    if rep.needs_ai and rep.domain:
         print(f"\n{dim}💡 Com a IA configurada a resposta é sob medida: voidbr-ai --setup-ai{reset}")
     if rep.actions:
         print(f"\n{bold}🛠️  Ações propostas:{reset}")
