@@ -9,6 +9,10 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.3.1 (2026-09-30): diagnóstico de impressora (CUPS): detecta impressoras USB e
+#     de rede, adiciona sem driver (IPP Everywhere/IPP-USB), drivers por fabricante,
+#     fila travada, impressora pausada, padrão e página de teste; tamanho da fonte
+#     da GUI (A− / A+, Ctrl +/-/0), gravado na configuração.
 #   - v0.3.0 (2026-09-30): snapshot antes de ações de risco (voidbr-snapper-manager)
 #     com "Desfazer"; não roda como root; documentação local do Void/VoidBR para a
 #     IA; explicar comando ou erro (--explain); diagnósticos de vídeo/Wayland, boot

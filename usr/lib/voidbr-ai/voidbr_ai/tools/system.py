@@ -22,7 +22,8 @@ from .privileged import run_helper
 from .registry import P, Tool
 
 # grupos que o helper aceita (a mesma lista fechada do voidbr-ai-helper)
-GRUPOS = ["audio", "video", "render", "input", "bluetooth", "socklog", "_seatd", "network", "plugdev"]
+GRUPOS = ["audio", "video", "render", "input", "bluetooth", "socklog", "_seatd", "network", "plugdev",
+          "lpadmin"]
 
 
 def a_add_group(group, on_line=None):
@@ -266,7 +267,7 @@ def analyze(state, reg):
 def register(reg):
     reg.register(Tool("user.add_group", "Adicionar você a um grupo",
                       "Adiciona o usuário atual a um grupo do sistema (audio, video, render, input, "
-                      "bluetooth, socklog, _seatd, network, plugdev). Vale no próximo login.",
+                      "bluetooth, socklog, _seatd, network, plugdev, lpadmin). Vale no próximo login.",
                       a_add_group, kind="action", domain="system",
                       params={"group": P("string", "grupo", enum=GRUPOS)}, required=["group"],
                       check=_c_group, title="Adicionar você ao grupo {group}",

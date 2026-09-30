@@ -38,6 +38,7 @@ Mesmo visual do voidbr-iso-writer e do voidbr-snapper-manager-gui.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,6 +62,8 @@ PROVIDERS = [("Automático (Ollama local, se houver)", "auto"), ("Nenhum (só re
 # "Gemini" é o provider openai apontando para a API compatível do Google
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 OPENAI_URL = "https://api.openai.com/v1"
+
+ESCALA_MIN, ESCALA_MAX = 0.7, 2.0     # tamanho da fonte: 70% a 200%
 
 ICONE_PASSO = {"ok": "✅", "warn": "⚠️", "fail": "❌", "info": "•", "running": "⏳"}
 ICONE_ACHADO = {"erro": "❌", "aviso": "⚠️", "info": "ℹ️", "ok": "✅"}
@@ -153,6 +156,19 @@ button:disabled {
     color: #f1f1f1;
     box-shadow: none;
 }
+
+.botao-fonte {
+    font-weight: bold;
+    padding: 2px 10px;
+    min-height: 24px;
+    background: #3b3d52;
+    color: #f1f1f1;
+    border: 1px solid #4b4e66;
+}
+.botao-fonte label { color: #f1f1f1; }
+.botao-fonte:hover { background: #4b4e66; }
+.botao-fonte:disabled { background: #2a2b3a; }
+.botao-fonte:disabled label { color: #6b7280; }
 
 .botao-menu {
     border-radius: 8px;
@@ -337,11 +353,30 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         provider.load_from_data(CSS.encode("utf-8"))
         Gtk.StyleContext.add_provider_for_display(
             self.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        # tamanho da fonte (A− / A+ / Ctrl+ Ctrl- Ctrl0), vale para todas as janelas do app
+        self.css_fonte = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), self.css_fonte, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        try:
+            self.escala = min(ESCALA_MAX, max(ESCALA_MIN, float(g.get("font_scale", 1.0))))
+        except (TypeError, ValueError):
+            self.escala = 1.0
 
         # --- Barra de título com menu ---
         cabecalho = Gtk.HeaderBar()
         cabecalho.add_css_class("cabecalho-app")
         self.set_titlebar(cabecalho)
+
+        fonte = Gtk.Box(spacing=0)
+        fonte.add_css_class("linked")
+        self.b_menor = Gtk.Button(label="A−", tooltip_text="Diminuir a fonte (Ctrl -)")
+        self.b_escala = Gtk.Button(label="100%", tooltip_text="Tamanho normal (Ctrl 0)")
+        self.b_maior = Gtk.Button(label="A+", tooltip_text="Aumentar a fonte (Ctrl +)")
+        for b, passo in ((self.b_menor, -1), (self.b_escala, 0), (self.b_maior, 1)):
+            b.add_css_class("botao-fonte")
+            b.connect("clicked", lambda _b, p=passo: self.mudar_fonte(p))
+            fonte.append(b)
+        cabecalho.pack_start(fonte)
 
         menu = Gio.Menu()
         menu.append("🦙 Configurar IA local (Ollama)", "win.ia")
@@ -364,10 +399,18 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
                          ("explicar", self.ao_clicar_explicar),
                          ("avisos", self.ao_clicar_avisos),
                          ("ferramentas", self.ao_clicar_ferramentas),
-                         ("sobre", self.ao_clicar_sobre)):
+                         ("sobre", self.ao_clicar_sobre),
+                         ("fonte_mais", lambda *_: self.mudar_fonte(1)),
+                         ("fonte_menos", lambda *_: self.mudar_fonte(-1)),
+                         ("fonte_normal", lambda *_: self.mudar_fonte(0))):
             acao = Gio.SimpleAction.new(nome, None)
             acao.connect("activate", cb)
             self.add_action(acao)
+        app.set_accels_for_action("win.fonte_mais", ["<Control>plus", "<Control>equal",
+                                                     "<Control>KP_Add"])
+        app.set_accels_for_action("win.fonte_menos", ["<Control>minus", "<Control>KP_Subtract"])
+        app.set_accels_for_action("win.fonte_normal", ["<Control>0", "<Control>KP_0"])
+        self.aplicar_fonte()
 
         caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                         margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
@@ -429,6 +472,35 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
 
         self.atualizar_status()
         self.entrada.grab_focus()
+
+    # -- tamanho da fonte ---------------------------------------------------
+
+    def aplicar_fonte(self):
+        """Aplica a escala da fonte em todas as janelas do app (CSS de maior prioridade)."""
+        nome = Gtk.Settings.get_default().props.gtk_font_name or ""
+        m = re.search(r"(\d+(?:\.\d+)?)\s*$", nome)
+        base = float(m.group(1)) if m else 11.0
+        s = self.escala
+        self.css_fonte.load_from_data((
+            f"window, window * {{ font-size: {base * s:.1f}pt; }}\n"
+            f".titulo-app {{ font-size: {20 * s:.0f}px; }}\n"
+            f".saida {{ font-size: {11 * s:.0f}px; }}\n").encode("utf-8"))
+        self.b_escala.set_label(f"{round(s * 100)}%")
+        self.b_menor.set_sensitive(s > ESCALA_MIN + 0.001)
+        self.b_maior.set_sensitive(s < ESCALA_MAX - 0.001)
+
+    def mudar_fonte(self, passo):
+        """passo: +1 aumenta, -1 diminui, 0 volta ao normal. Fica gravado na configuração."""
+        nova = 1.0 if passo == 0 else round(self.escala + 0.1 * passo, 2)
+        nova = min(ESCALA_MAX, max(ESCALA_MIN, nova))
+        if nova == self.escala and passo:
+            return
+        self.escala = nova
+        self.aplicar_fonte()
+        try:
+            config.save_user({"gui": {"font_scale": nova}})
+        except OSError as e:
+            history.log.warning("não foi possível gravar a escala da fonte: %s", e)
 
     # -- helpers de construção ---------------------------------------------
 

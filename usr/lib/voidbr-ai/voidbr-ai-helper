@@ -39,8 +39,12 @@
 #     grub-update                       update-grub
 #     limine-update                     update-limine (se existir)
 #     groups-add      GRUPO             gpasswd -a <usuário que chamou> GRUPO (lista fechada)
+#     printer-add     NOME URI          lpadmin -p NOME -E -v URI -m everywhere (sem driver)
+#     printer-enable  NOME              cupsenable NOME && cupsaccept NOME
+#     printer-cancel-jobs NOME          cancel -a NOME
 #
 #   ChangeLog:
+#   - 2026-09-30: impressoras: printer-add, printer-enable, printer-cancel-jobs; grupo lpadmin.
 #   - 2026-09-30: --snapshot (voidbr-snapper-manager); kernel-reconfigure, grub-update,
 #     limine-update, groups-add.
 #   - 2026-09-30: qualquer serviço de /etc/sv; pacotes (instalar, remover,
@@ -86,6 +90,10 @@ need_pkgs() {
 	for p in "$@"; do
 		[[ $p =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$ ]] || die "nome de pacote inválido: $p"
 	done
+}
+
+need_printer() {
+	[[ ${1:-} =~ ^[A-Za-z0-9_-]{1,64}$ ]] || die "nome de impressora inválido: ${1:-}"
 }
 
 # o runsvdir leva alguns segundos para assumir um serviço recém-habilitado
@@ -270,7 +278,7 @@ limine-update)
 	;;
 groups-add)
 	case ${1:-} in
-	audio | video | render | input | bluetooth | socklog | _seatd | network | plugdev) ;;
+	audio | video | render | input | bluetooth | socklog | _seatd | network | plugdev | lpadmin) ;;
 	*) die "grupo não permitido: ${1:-}" ;;
 	esac
 	getent group "$1" >/dev/null || die "o grupo $1 não existe"
@@ -279,6 +287,28 @@ groups-add)
 	[[ -n $user && $PKEXEC_UID -ne 0 ]] || die "usuário inválido"
 	gpasswd -a "$user" "$1" || die "não foi possível adicionar $user ao grupo $1"
 	ok "$user adicionado ao grupo $1 (vale a partir do próximo login)"
+	;;
+printer-add)
+	need_printer "${1:-}"
+	re_uri='^ipps?://[][A-Za-z0-9._~:/?#@%+=,-]{1,200}$'
+	[[ ${2:-} =~ $re_uri ]] || die "URI inválido: ${2:-} (só ipp:// ou ipps://)"
+	command -v lpadmin >/dev/null || die "lpadmin não encontrado (pacote cups)"
+	lpstat -v "$1" >/dev/null 2>&1 && die "já existe uma impressora chamada $1"
+	lpadmin -p "$1" -E -v "$2" -m everywhere || die "lpadmin falhou (a impressora está ligada e aceita IPP Everywhere?)"
+	ok "impressora $1 adicionada ($2)"
+	;;
+printer-enable)
+	need_printer "${1:-}"
+	lpstat -v "$1" >/dev/null 2>&1 || die "a impressora $1 não existe no CUPS"
+	cupsenable "$1" || die "cupsenable $1 falhou"
+	cupsaccept "$1" || die "cupsaccept $1 falhou"
+	ok "impressora $1 reativada"
+	;;
+printer-cancel-jobs)
+	need_printer "${1:-}"
+	lpstat -v "$1" >/dev/null 2>&1 || die "a impressora $1 não existe no CUPS"
+	cancel -a "$1" || die "cancel -a $1 falhou"
+	ok "fila de $1 limpa"
 	;;
 *)
 	die "verbo não permitido: ${verb:-<vazio>}"

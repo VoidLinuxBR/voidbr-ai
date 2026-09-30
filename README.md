@@ -22,7 +22,7 @@ Depois, verifica se resolveu de verdade.
 | | Sem IA | Com IA (Ollama local ou OpenAI) |
 |---|---|---|
 | **Check-up geral** | ✅ | ✅ (+ interpretação) |
-| **Diagnósticos prontos**: rede, disco, pacotes, serviços, áudio, Bluetooth, vídeo/Wayland, boot, logs, memória/CPU | ✅ | ✅ |
+| **Diagnósticos prontos**: rede, disco, pacotes, serviços, áudio, Bluetooth, vídeo/Wayland, impressora, boot, logs, memória/CPU | ✅ | ✅ |
 | **"Como faço…"** | trechos da documentação local | ✅ resposta direta, com a documentação local |
 | **Explicar comando ou erro** (nada é executado) | riscos e erros conhecidos | ✅ explicação completa |
 | **Perguntas livres** ("por que…", "meu … não funciona") | — | ✅ a IA consulta o sistema e responde |
@@ -43,7 +43,7 @@ voidbr-ai "como instalo o steam?"
 voidbr-ai "faça um script que faça backup da pasta ~/Documentos"
 voidbr-ai --checkup                         # check-up geral
 voidbr-ai --diagnose audio                  # network, storage, packages, services, audio,
-                                            # bluetooth, graphics, boot, logs, system
+                                            # bluetooth, graphics, printing, boot, logs, system
 voidbr-ai --diagnose network --json         # saída estruturada
 voidbr-ai --setup-ai                        # configura a IA local (Ollama)
 voidbr-ai --list-tools                      # ferramentas e ações disponíveis
@@ -65,6 +65,12 @@ pedem a senha na hora (pkexec).
   criam um snapshot antes (nas ações do xbps, o próprio hook do snapper cria o par pre/post).
   O cartão da ação mostra **↩️ Desfazer…**, que abre o Gerenciador de snapshots.
   Desligar: `[agent] snapshot = false`.
+- **Impressora:** detecta impressoras USB (pelo /sys, sem root) e de rede (avahi), adiciona
+  as que imprimem sem driver (IPP Everywhere / IPP-USB), instala o driver do fabricante (HP,
+  Brother, Epson, Canon…), reativa impressora pausada, limpa a fila, define a padrão e imprime
+  a página de teste.
+- **Tamanho da fonte:** botões **A− / 100% / A+** na barra de título (ou Ctrl +, Ctrl -, Ctrl 0);
+  fica gravado em `[gui] font_scale`.
 - **Documentação local:** trechos do Void Handbook e das ferramentas do VoidBR (vinstall,
   vservice, pkgmake) em `/usr/share/voidbr-ai/kb/`. A IA recebe os trechos relevantes
   (e erra menos com modelos pequenos); sem IA eles são mostrados direto.

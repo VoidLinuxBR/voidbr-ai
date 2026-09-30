@@ -17,7 +17,8 @@ Um domínio novo (ex: vídeo, impressora) é um módulo novo aqui; o Agent, a CL
 a GUI não mudam.
 """
 
-from . import audio, bluetooth, boot, graphics, logs, network, packages, services, storage, system
+from . import (audio, bluetooth, boot, graphics, logs, network, packages, printing, services,
+               storage, system)
 from .registry import (Action, InvalidArgs, NotConfirmed, Registry, Tool,  # noqa: F401
                        ToolDisabled)
 
@@ -30,6 +31,7 @@ DOMAINS = {
     "audio": audio,
     "bluetooth": bluetooth,
     "graphics": graphics,
+    "printing": printing,
     "boot": boot,
     "logs": logs,
     "system": system,
@@ -43,6 +45,7 @@ LABELS = {
     "audio": "🔊 Áudio",
     "bluetooth": "🔵 Bluetooth",
     "graphics": "🖥️ Vídeo e sessão",
+    "printing": "🖨️ Impressora",
     "boot": "🚀 Boot",
     "logs": "📜 Logs",
     "system": "🧠 Memória e CPU",
@@ -51,12 +54,14 @@ LABELS = {
 ALIASES = {"rede": "network", "disk": "storage", "disco": "storage", "pacotes": "packages",
            "servicos": "services", "audio": "audio", "som": "audio", "sistema": "system",
            "memoria": "system", "video": "graphics", "graficos": "graphics", "wayland": "graphics",
-           "log": "logs", "inicializacao": "boot", "grub": "boot", "kernel": "boot"}
+           "log": "logs", "inicializacao": "boot", "grub": "boot", "kernel": "boot",
+           "impressora": "printing", "impressao": "printing", "printer": "printing"}
 
 
 def build_registry(disabled=None):
     reg = Registry(disabled)
-    for mod in (system, services, packages, storage, network, audio, bluetooth, graphics, boot, logs):
+    for mod in (system, services, packages, storage, network, audio, bluetooth, graphics, printing,
+                boot, logs):
         mod.register(reg)
         if hasattr(mod, "register_checks"):
             mod.register_checks(reg)

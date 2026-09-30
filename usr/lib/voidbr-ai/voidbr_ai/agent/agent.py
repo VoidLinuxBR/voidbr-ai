@@ -271,6 +271,7 @@ _TOOL_DOMAINS = {
     "graphics": {"graphics", "hardware"},
     "boot": {"boot", "packages"},
     "logs": {"logs", "services"},
+    "printing": {"printing", "services"},
 }
 _TOOLS_BASE = ("system.info", "system.memory", "system.processes", "system.log",
                "service.status", "pkg.search", "pkg.info", "pkg.install", "kb.search")

@@ -72,6 +72,7 @@ DEFAULTS = {
         "width": 900,
         "height": 740,
         "ai_setup": "",              # "" = perguntar | "dispensado" | "feito"
+        "font_scale": 1.0,           # tamanho da fonte: 0.7 a 2.0 (A− / A+ / Ctrl +, Ctrl -, Ctrl 0)
     },
     "log": {
         "level": "info",             # debug | info | warning | error
