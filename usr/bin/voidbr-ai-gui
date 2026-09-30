@@ -9,6 +9,9 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.2.4 (2026-09-30): Configurações da IA na GUI: opção Gemini, campo para colar a
+#     chave (gravada à parte, chmod 600), buscar modelos, testar, e ajustes do Ollama
+#     (contexto, manter carregado, modo pensando).
 #   - v0.2.3 (2026-09-30): pedidos de script/código respondidos direto (código em
 #     monoespaçado na GUI); nova tentativa automática quando a API está ocupada
 #     (429/503); erro da IA curto e mostrado uma vez; --list-models;

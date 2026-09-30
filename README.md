@@ -121,7 +121,22 @@ think = false       # qwen3 sem o modo "pensando" (bem mais rápido)
 max_steps = 8       # consultas ao sistema antes de responder
 ```
 
-A chave da OpenAI nunca fica no arquivo: `api_key_env` (nome da variável) ou `api_key_file`.
+Pela GUI: **☰ → ⚙️ Configurações da IA** — escolha Ollama, Gemini ou OpenAI/compatível,
+cole a chave, use **🔄 Buscar modelos** e **🧪 Testar** antes de salvar.
+
+Gemini (plano grátis; chave em aistudio.google.com):
+
+```toml
+provider = "openai"
+
+[openai]
+url = "https://generativelanguage.googleapis.com/v1beta/openai"
+model = "gemini-3.8-flash"          # voidbr-ai --list-models mostra os disponíveis
+api_key_file = "~/.config/voidbr-ai/gemini.key"
+```
+
+A chave nunca fica no `config.toml`: vai num arquivo à parte (`api_key_file`, chmod 600)
+ou numa variável de ambiente (`api_key_env`).
 
 ## Histórico
 

@@ -37,7 +37,9 @@ Mesmo visual do voidbr-iso-writer e do voidbr-snapper-manager-gui.
 """
 
 import json
+import os
 import threading
+import time
 
 import gi
 
@@ -50,8 +52,12 @@ from ..agent import Agent  # noqa: E402
 APP_ID = "br.voidbr.ai"
 
 PROVIDERS = [("Automático (Ollama local, se houver)", "auto"), ("Nenhum (só regras)", "none"),
-             ("Ollama (local)", "ollama"),
-             ("OpenAI / compatível", "openai")]
+             ("Ollama (local)", "ollama"), ("Gemini (Google)", "gemini"),
+             ("OpenAI / API compatível", "openai")]
+
+# "Gemini" é o provider openai apontando para a API compatível do Google
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+OPENAI_URL = "https://api.openai.com/v1"
 
 ICONE_PASSO = {"ok": "✅", "warn": "⚠️", "fail": "❌", "info": "•", "running": "⏳"}
 ICONE_ACHADO = {"erro": "❌", "aviso": "⚠️", "info": "ℹ️", "ok": "✅"}
@@ -874,9 +880,13 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
                            "Ações só rodam com a sua confirmação, via pkexec.\n\n" + "\n".join(linhas))
 
     def ao_clicar_configuracoes(self, *_, provider=None):
+        """Configurações da IA. Grava em ~/.config/voidbr-ai/config.toml; a chave
+        da API vai para um arquivo à parte (chmod 600), nunca para o .toml."""
+        from .. import providers
         cfg = self.cfg
-        dlg = Gtk.Window(title="Configurações", transient_for=self, modal=True,
-                         default_width=560)
+        oc, ac = cfg["ollama"], cfg["openai"]
+        dlg = Gtk.Window(title="Configurações da IA", transient_for=self, modal=True,
+                         default_width=620)
         caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                         margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
         titulo = Gtk.Label(label="🧠 Inteligência artificial", xalign=0)
@@ -884,58 +894,234 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         caixa.append(titulo)
         caixa.append(self._label(
             "A IA é opcional: sem ela o check-up e os diagnósticos prontos continuam "
-            "funcionando. Com o Ollama o modelo roda na sua máquina (use ☰ → Configurar IA "
-            "local para instalar). A chave da OpenAI <b>não</b> é gravada aqui: informe o "
-            "nome da variável de ambiente que a contém.", "detalhe", False))
+            "funcionando. <b>Ollama</b> roda na sua máquina (nada sai dela). <b>Gemini</b> e "
+            "<b>OpenAI</b> rodam na internet e precisam de uma chave da API.", "detalhe", False))
 
-        grade = Gtk.Grid(column_spacing=12, row_spacing=10)
-        linha = [0]
+        def grade_nova():
+            g = Gtk.Grid(column_spacing=12, row_spacing=8)
+            g.linha = 0
+            return g
 
-        def campo(rotulo, widget):
-            grade.attach(Gtk.Label(label=rotulo, xalign=0), 0, linha[0], 1, 1)
+        def campo(g, rotulo, widget, extra=None):
+            g.attach(Gtk.Label(label=rotulo, xalign=0), 0, g.linha, 1, 1)
             widget.set_hexpand(True)
-            grade.attach(widget, 1, linha[0], 1, 1)
-            linha[0] += 1
+            g.attach(widget, 1, g.linha, 1 if extra else 2, 1)
+            if extra:
+                g.attach(extra, 2, g.linha, 1, 1)
+            g.linha += 1
             return widget
 
+        def grupo(titulo_grupo, g):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            box.add_css_class("cartao")
+            rot = Gtk.Label(label=titulo_grupo, xalign=0)
+            rot.add_css_class("subtitulo")
+            box.append(rot)
+            box.append(g)
+            caixa.append(box)
+            return box
+
+        # provider -------------------------------------------------------------
+        g0 = grade_nova()
         codigos = [c for _, c in PROVIDERS]
-        lista = campo("🧠 Provider:", Gtk.DropDown.new_from_strings([r for r, _ in PROVIDERS]))
+        lista = campo(g0, "Usar:", Gtk.DropDown.new_from_strings([r for r, _ in PROVIDERS]))
         atual = provider or cfg.get("provider", "none")
+        if atual == "openai" and "generativelanguage.googleapis.com" in ac.get("url", ""):
+            atual = "gemini"
         lista.set_selected(codigos.index(atual) if atual in codigos else 0)
-        o_url = campo("🦙 Ollama URL:", Gtk.Entry(text=cfg["ollama"].get("url", "")))
-        o_mod = campo("🦙 Ollama modelo:", Gtk.Entry(text=cfg["ollama"].get("model", "")))
-        a_url = campo("🌐 OpenAI URL:", Gtk.Entry(text=cfg["openai"].get("url", "")))
-        a_mod = campo("🌐 OpenAI modelo:", Gtk.Entry(text=cfg["openai"].get("model", "")))
-        a_env = campo("🔑 Variável da chave:", Gtk.Entry(text=cfg["openai"].get("api_key_env", "")))
-        caixa.append(grade)
+        caixa.append(g0)
+
+        # Ollama ---------------------------------------------------------------
+        g1 = grade_nova()
+        o_url = campo(g1, "Endereço:", Gtk.Entry(text=oc.get("url", "")))
+        o_mod = Gtk.Entry(text=oc.get("model", ""))
+        o_buscar = Gtk.Button(label="🔄 Buscar modelos")
+        o_buscar.add_css_class("botao-cinza")
+        campo(g1, "Modelo:", o_mod, o_buscar)
+        o_lista = Gtk.DropDown()
+        o_lista.set_visible(False)
+        campo(g1, "", o_lista)
+        o_ctx = campo(g1, "Contexto (tokens):", Gtk.SpinButton.new_with_range(2048, 131072, 1024))
+        o_ctx.set_value(int(oc.get("num_ctx", 8192)))
+        o_keep = campo(g1, "Manter carregado:", Gtk.Entry(text=str(oc.get("keep_alive", "30m")),
+                                                          placeholder_text="ex: 30m, 2h, -1 = sempre"))
+        o_think = Gtk.Switch(active=bool(oc.get("think", False)), halign=Gtk.Align.START)
+        campo(g1, "Modo pensando:", o_think)
+        g1.attach(self._label("<small>Contexto maior usa mais memória. Modo pensando deixa o "
+                              "qwen3 bem mais lento.</small>", "detalhe", False), 0, g1.linha, 3, 1)
+        box_ollama = grupo("🦙 Ollama", g1)
+
+        # API (Gemini / OpenAI) ------------------------------------------------
+        g2 = grade_nova()
+        a_url = campo(g2, "Endereço:", Gtk.Entry(text=ac.get("url", "")))
+        a_mod = Gtk.Entry(text=ac.get("model", ""))
+        a_buscar = Gtk.Button(label="🔄 Buscar modelos")
+        a_buscar.add_css_class("botao-cinza")
+        campo(g2, "Modelo:", a_mod, a_buscar)
+        a_lista = Gtk.DropDown()
+        a_lista.set_visible(False)
+        campo(g2, "", a_lista)
+        a_chave = campo(g2, "Chave da API:", Gtk.PasswordEntry(show_peek_icon=True))
+        a_ajuda = self._label("", "detalhe", False)
+        g2.attach(a_ajuda, 0, g2.linha, 3, 1)
+        box_api = grupo("🌐 API na internet", g2)
+
+        resultado = self._label("", "detalhe")
+        caixa.append(resultado)
+
+        def arquivo_chave(p):
+            return os.path.join(config.user_config_dir(), f"{'gemini' if p == 'gemini' else 'openai'}.key")
 
         def ao_mudar(*_):
             p = codigos[lista.get_selected()]
-            for w in (o_url, o_mod):
-                w.set_sensitive(p in ("ollama", "auto"))
-            for w in (a_url, a_mod, a_env):
-                w.set_sensitive(p == "openai")
+            box_ollama.set_visible(p in ("ollama", "auto"))
+            box_api.set_visible(p in ("gemini", "openai"))
+            if p == "gemini":
+                if not a_url.get_text().startswith(GEMINI_URL):
+                    a_url.set_text(GEMINI_URL)
+                a_ajuda.set_markup("<small>Chave gratuita em <b>aistudio.google.com</b> → Get API key. "
+                                   "No plano grátis o Google pode usar os dados enviados para "
+                                   "melhorar os produtos dele.</small>")
+            elif p == "openai":
+                if a_url.get_text().startswith(GEMINI_URL) or not a_url.get_text().strip():
+                    a_url.set_text(OPENAI_URL)
+                a_ajuda.set_markup("<small>Serve para qualquer API compatível (OpenAI, OpenRouter, "
+                                   "llama.cpp, LM Studio…): troque o endereço.</small>")
+            if p in ("gemini", "openai"):
+                env = ac.get("api_key_env") or "OPENAI_API_KEY"
+                tem = os.path.isfile(arquivo_chave(p)) or (p == "openai" and os.environ.get(env))
+                a_chave.set_property("placeholder-text",
+                                     "(já configurada — deixe vazio para manter)" if tem
+                                     else "cole a chave aqui")
+            resultado.set_text("")
         lista.connect("notify::selected", ao_mudar)
         ao_mudar()
 
+        def formulario():
+            """(mudanças para o config.toml, cfg completo para testar agora)"""
+            p = codigos[lista.get_selected()]
+            real = "openai" if p == "gemini" else p
+            m = {"provider": real,
+                 "gui": {"ai_setup": "feito" if real != "none" else cfg.get("gui", {}).get("ai_setup", "")},
+                 "ollama": {"url": o_url.get_text().strip(), "model": o_mod.get_text().strip(),
+                            "num_ctx": int(o_ctx.get_value()),
+                            "keep_alive": o_keep.get_text().strip() or "30m",
+                            "think": o_think.get_active()},
+                 "openai": {"url": a_url.get_text().strip(), "model": a_mod.get_text().strip()}}
+            if p in ("gemini", "openai"):
+                arq = arquivo_chave(p)
+                # cada serviço tem o seu arquivo de chave (a do Gemini não vai para a OpenAI)
+                m["openai"]["api_key_file"] = arq if (a_chave.get_text().strip() or
+                                                     os.path.isfile(arq)) else ""
+            teste = json.loads(json.dumps(cfg))
+            for k, v in m.items():
+                if isinstance(v, dict):
+                    teste.setdefault(k, {}).update(v)
+                else:
+                    teste[k] = v
+            if a_chave.get_text().strip():
+                teste["openai"]["_api_key"] = a_chave.get_text().strip()   # só na memória
+            return m, teste
+
+        def em_thread(botao, fn, fim):
+            botao.set_sensitive(False)
+
+            def trabalho():
+                try:
+                    r, erro = fn(), None
+                except providers.ProviderError as e:
+                    r, erro = None, str(e)
+                except Exception as e:  # nunca trava o diálogo
+                    r, erro = None, str(e)
+                GLib.idle_add(lambda: (botao.set_sensitive(True), fim(r, erro)) and False)
+            threading.Thread(target=trabalho, daemon=True).start()
+
+        def buscar(entrada, drop, botao, qual):
+            def fn():
+                _m, teste = formulario()
+                teste["provider"] = qual
+                prov = providers.get_provider(teste)
+                if prov.name == "none":
+                    raise providers.ProviderError(prov.cfg.get("_motivo") or "Ollama não responde")
+                return prov.list_models()
+
+            def fim(nomes, erro):
+                if erro:
+                    resultado.set_markup(f"❌ {esc(erro)}")
+                    return
+                if not nomes:
+                    resultado.set_markup("⚠️ Nenhum modelo disponível.")
+                    return
+                atual_m = entrada.get_text().strip()
+                drop.set_model(Gtk.StringList.new(["— escolha um modelo —", *nomes]))
+                drop.set_selected(nomes.index(atual_m) + 1 if atual_m in nomes else 0)
+                entrada.set_text(atual_m)
+                drop.set_visible(True)
+                resultado.set_markup(f"✅ {len(nomes)} modelo(s) — escolha na lista.")
+
+            def ao_escolher(d, *_):
+                item = d.get_selected_item()
+                if item is not None and d.get_selected() > 0:
+                    entrada.set_text(item.get_string())
+            if not getattr(drop, "_ligado", False):
+                drop.connect("notify::selected", ao_escolher)
+                drop._ligado = True
+            resultado.set_markup("⏳ Buscando modelos…")
+            em_thread(botao, fn, fim)
+
+        o_buscar.connect("clicked", lambda b: buscar(o_mod, o_lista, b, "ollama"))
+        a_buscar.connect("clicked", lambda b: buscar(a_mod, a_lista, b, "openai"))
+
         linha_b = Gtk.Box(spacing=8, homogeneous=True)
+        testar = Gtk.Button(label="🧪 Testar")
+        testar.add_css_class("botao-azul")
+        linha_b.append(testar)
         linha_b.append(self._botao("❌ Cancelar", "botao-cinza", lambda *_: dlg.close()))
         salvar = Gtk.Button(label="💾 Salvar")
         salvar.add_css_class("botao-verde")
         linha_b.append(salvar)
         caixa.append(linha_b)
-        dlg.set_child(caixa)
+
+        rolagem = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                     propagate_natural_height=True, max_content_height=700)
+        rolagem.set_child(caixa)
+        dlg.set_child(rolagem)
+
+        def ao_testar(b):
+            def fn():
+                _m, teste = formulario()
+                prov = providers.get_provider(teste)
+                ok, msg = prov.available() if prov.name != "none" else \
+                    (False, prov.cfg.get("_motivo") or "nenhuma IA escolhida")
+                if not ok:
+                    raise providers.ProviderError(msg)
+                inicio = time.monotonic()
+                texto = prov.answer([{"role": "user", "content":
+                                      "Responda só com a palavra: funcionando"}])
+                return prov.describe(), time.monotonic() - inicio, texto.strip()[:80]
+
+            def fim(r, erro):
+                if erro:
+                    resultado.set_markup(f"❌ {esc(erro)}")
+                else:
+                    resultado.set_markup(f"✅ {esc(r[0])} respondeu em {r[1]:.1f} s: "
+                                         f"<i>{esc(r[2])}</i>")
+            resultado.set_markup("⏳ Testando… (com IA local na CPU pode levar um tempo)")
+            em_thread(b, fn, fim)
+        testar.connect("clicked", ao_testar)
 
         def ao_salvar(*_):
-            mudancas = {
-                "provider": codigos[lista.get_selected()],
-                "gui": {"ai_setup": "feito" if codigos[lista.get_selected()] != "none" else
-                        cfg.get("gui", {}).get("ai_setup", "")},
-                "ollama": {"url": o_url.get_text().strip(), "model": o_mod.get_text().strip()},
-                "openai": {"url": a_url.get_text().strip(), "model": a_mod.get_text().strip(),
-                           "api_key_env": a_env.get_text().strip() or "OPENAI_API_KEY"},
-            }
+            p = codigos[lista.get_selected()]
+            mudancas, _t = formulario()
+            chave = a_chave.get_text().strip()
             try:
+                if chave and p in ("gemini", "openai"):
+                    arq = arquivo_chave(p)
+                    os.makedirs(os.path.dirname(arq), exist_ok=True)
+                    fd = os.open(arq, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(chave + "\n")
+                    os.chmod(arq, 0o600)
                 path = config.save_user(mudancas)
             except OSError as e:
                 self.erro("Não foi possível salvar", str(e))

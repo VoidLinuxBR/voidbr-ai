@@ -30,6 +30,8 @@ class OpenAI(Provider):
         return self.cfg.get("url", "https://api.openai.com/v1").rstrip("/")
 
     def api_key(self):
+        if self.cfg.get("_api_key"):          # digitada na GUI e ainda não salva (teste)
+            return self.cfg["_api_key"]
         env = self.cfg.get("api_key_env") or "OPENAI_API_KEY"
         if os.environ.get(env):
             return os.environ[env]
