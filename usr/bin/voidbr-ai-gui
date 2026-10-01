@@ -9,6 +9,8 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.3.4 (2026-09-30): renderizador cairo por padrão ([gui] renderer): com o
+#     Vulkan/NGL a parte de baixo da janela sumia ao maximizar.
 #   - v0.3.3 (2026-09-30): Aparência: a fonte escolhida aparece só no exemplo e a
 #     interface muda ao salvar (antes a janela se desmontava e sumiam os botões);
 #     a janela Aparência fica sempre na fonte do sistema; voidbr-ai-gui --reset-font.
@@ -49,6 +51,15 @@ import sys
 
 _base = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "voidbr-ai")
 sys.path.insert(0, os.path.normpath(_base) if os.path.isdir(_base) else "/usr/lib/voidbr-ai")
+
+# Renderizador do GTK: precisa ser definido antes de carregar o GTK.
+# Padrão "cairo" (software): o Vulkan/NGL do GTK 4.16+ deixa a janela sem desenhar a
+# parte de baixo ao maximizar em algumas placas/VMs. Quem definir GSK_RENDERER manda.
+if not os.environ.get("GSK_RENDERER"):
+    from voidbr_ai import config  # noqa: E402
+    _r = str(config.load().get("gui", {}).get("renderer", "cairo") or "").strip().lower()
+    if _r and _r not in ("auto", "padrao", "default"):
+        os.environ["GSK_RENDERER"] = _r
 
 from voidbr_ai.gui.app import main  # noqa: E402
 

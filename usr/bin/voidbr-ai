@@ -9,6 +9,8 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.3.4 (2026-09-30): renderizador cairo por padrão ([gui] renderer): com o
+#     Vulkan/NGL a parte de baixo da janela sumia ao maximizar.
 #   - v0.3.3 (2026-09-30): Aparência: a fonte escolhida aparece só no exemplo e a
 #     interface muda ao salvar (antes a janela se desmontava e sumiam os botões);
 #     a janela Aparência fica sempre na fonte do sistema; voidbr-ai-gui --reset-font.

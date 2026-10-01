@@ -53,6 +53,10 @@ snapshot = true
 disabled = []
 
 [gui]
+# renderizador do GTK: "cairo" (padrão, funciona em qualquer placa e em VM) ou
+# "auto" (o padrão do GTK: Vulkan/NGL). Com Vulkan/NGL, em algumas placas e VMs a
+# parte de baixo da janela some ao maximizar.
+renderer = "cairo"
 width = 900
 height = 740
 

@@ -74,6 +74,9 @@ DEFAULTS = {
         "ai_setup": "",              # "" = perguntar | "dispensado" | "feito"
         "font_scale": 1.0,           # tamanho da fonte: 0.7 a 2.0 (A− / A+ / Ctrl +, Ctrl -, Ctrl 0)
         "font_family": "",           # fonte da interface ("" = a do sistema); ☰ → Aparência
+        # renderizador do GTK: "cairo" (padrão, funciona em qualquer placa/VM) ou
+        # "auto" (o do GTK: Vulkan/NGL), "ngl", "gl", "vulkan". GSK_RENDERER no ambiente manda.
+        "renderer": "cairo",
     },
     "log": {
         "level": "info",             # debug | info | warning | error

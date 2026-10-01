@@ -73,6 +73,9 @@ pedem a senha na hora (pkexec).
   Ctrl -, Ctrl 0) e a família em ☰ → 🔤 Aparência (com exemplo; muda ao salvar). Ficam
   gravados em `[gui] font_scale` e `font_family`; código e comandos continuam monoespaçados.
   Se uma fonte deixar a janela ilegível: `voidbr-ai-gui --reset-font`.
+- **Renderizador:** a janela usa o renderizador `cairo` do GTK por padrão; com o Vulkan/NGL,
+  em algumas placas e VMs, a parte de baixo some ao maximizar. Para usar o do GTK:
+  `[gui] renderer = "auto"` (ou `GSK_RENDERER=...` no ambiente).
 - **Documentação local:** trechos do Void Handbook e das ferramentas do VoidBR (vinstall,
   vservice, pkgmake) em `/usr/share/voidbr-ai/kb/`. A IA recebe os trechos relevantes
   (e erra menos com modelos pequenos); sem IA eles são mostrados direto.
