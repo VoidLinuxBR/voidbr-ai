@@ -27,10 +27,48 @@ HELPER = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..",
                                        "voidbr-ai-helper"))
 
 
+# Na GUI o pkexec precisa de um agente gráfico do polkit. Sem desligar o terminal,
+# o pkexec pediria a senha no terminal de onde a GUI foi aberta (e a janela ficaria
+# parada em "Executando…"). A GUI liga isto; a CLI continua pedindo no terminal.
+SEM_TERMINAL = False
+
+# agentes gráficos do polkit conhecidos (nome do executável)
+AGENTES = ("hyprpolkitagent", "polkit-gnome-authentication-agent-1", "polkit-kde-authentication-agent-1",
+           "polkit-mate-authentication-agent-1", "lxpolkit", "lxqt-policykit-agent", "xfce-polkit",
+           "soteria", "mate-polkit", "polkit-efl-authentication-agent-1", "cinnamon-polkit",
+           "ukui-polkit", "deepin-polkit-agent", "budgie-polkit-dialog", "pantheon-agent-polkit")
+
+
+def agente_polkit():
+    """Nome do agente gráfico do polkit rodando nesta máquina, ou ""."""
+    try:
+        pids = [p for p in os.listdir("/proc") if p.isdigit()]
+    except OSError:
+        return ""
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                cmd = f.read().split(b"\0")
+        except OSError:
+            continue
+        for parte in cmd[:2]:
+            nome = os.path.basename(parte.decode("utf-8", "replace"))
+            if nome in AGENTES or ("polkit" in nome and "agent" in nome and nome != "polkitd"):
+                return nome
+    return ""
+
+
+SEM_AGENTE = ("Nenhum agente do polkit está rodando para pedir a sua senha, então nada foi "
+              "executado. No Hyprland, inicie o hyprpolkitagent junto com a sessão (exec-once no "
+              "hyprland.conf); em outros ambientes, um agente como polkit-gnome ou lxqt-policykit. "
+              "Ou rode a ação pelo terminal com: voidbr-ai")
+
+
 def _stream(argv, timeout, on_line, env=None):
     try:
+        extra = {"stdin": subprocess.DEVNULL, "start_new_session": True} if SEM_TERMINAL else {}
         p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, errors="replace", env=env)
+                             text=True, errors="replace", env=env, **extra)
     except FileNotFoundError as e:
         return 127, f"não encontrado: {e.filename}", False
     linhas = []
@@ -78,10 +116,16 @@ def run_helper(verb, *args, timeout=600, on_line=None):
     _local.snapshot = None
     argv = [HELPER, *(["--snapshot", snap] if snap else []), verb, *[str(a) for a in args]]
     if os.geteuid() != 0:
+        if SEM_TERMINAL and not agente_polkit():
+            return {"ok": False, "rc": 127, "out": SEM_AGENTE, "err": SEM_AGENTE, "cancelled": False,
+                    "snapshot": None}
         argv = ["pkexec", *argv]
     rc, out, estourou = _stream(argv, timeout, on_line)
     if estourou:
         return {"ok": False, "rc": 124, "out": out, "err": "tempo esgotado", "cancelled": False}
+    if argv[0] == "pkexec" and "no authentication agent" in out.lower():
+        return {"ok": False, "rc": rc, "out": SEM_AGENTE, "err": SEM_AGENTE, "cancelled": False,
+                "snapshot": None}
     # pkexec: 126 = autenticação cancelada/negada, 127 = não autorizado
     cancelado = argv[0] == "pkexec" and rc in (126, 127) and "OK:" not in out
     m = re.search(r"^SNAPSHOT: (\d+)$", out, re.M)

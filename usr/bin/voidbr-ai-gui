@@ -9,6 +9,9 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.3.5 (2026-09-30): GUI: a senha das ações vem só do agente gráfico do polkit
+#     (antes, aberta pelo terminal, ficava parada em "Executando…" pedindo a senha lá);
+#     sem agente, avisa na hora em vez de travar.
 #   - v0.3.4 (2026-09-30): renderizador cairo por padrão ([gui] renderer): com o
 #     Vulkan/NGL a parte de baixo da janela sumia ao maximizar.
 #   - v0.3.3 (2026-09-30): Aparência: a fonte escolhida aparece só no exemplo e a

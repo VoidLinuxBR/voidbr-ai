@@ -190,7 +190,9 @@ git clone https://github.com/voidlinuxbr/voidbr-ai.git
 cd voidbr-ai/pkgfile && pkgmake
 ```
 
-Para as ações, tenha um agente polkit rodando (no Hyprland: `hyprpolkitagent`).
+Para as ações na janela, tenha um agente gráfico do polkit rodando (no Hyprland:
+`hyprpolkitagent`, iniciado com `exec-once` no `hyprland.conf`). Sem ele a janela avisa e
+nada é executado; pelo terminal (`voidbr-ai`) a senha é pedida no próprio terminal.
 
 ## Estender
 

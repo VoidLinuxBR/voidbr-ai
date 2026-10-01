@@ -1701,6 +1701,9 @@ def main():
         sys.argv = [a for a in sys.argv if a != "--reset-font"]
     cfg = config.load()
     history.setup_logging(cfg.get("log", {}).get("level", "info"))
+    # a senha das ações vem do agente gráfico do polkit, nunca do terminal
+    from ..tools import privileged
+    privileged.SEM_TERMINAL = True
     app = AppVoidbrAI()
     return app.run(None)
 
