@@ -190,6 +190,7 @@ class ExecResult:
     remaining: list = field(default_factory=list)
     after: Report = None
     snapshot: int = None      # snapshot criado antes (voidbr-snapper-manager), para desfazer
+    sem_agente: bool = False  # não havia agente do polkit (a senha foi pedida pela janela)
 
     def to_dict(self):
         return {"action": self.action.to_dict(), "ok": self.ok, "output": self.output[-2000:],
@@ -892,7 +893,8 @@ class Agent:
                                     snapshot=bool(self.cfg.get("agent", {}).get("snapshot", True)))
         saida = "\n".join(x for x in (res.get("out"), res.get("err")) if x)
         r = ExecResult(action=action, ok=res.get("ok", False), output=saida,
-                       cancelled=res.get("cancelled", False), snapshot=res.get("snapshot"))
+                       cancelled=res.get("cancelled", False), snapshot=res.get("snapshot"),
+                       sem_agente=bool(res.get("sem_agente")))
         if r.snapshot:
             self.emit("verify", "snap", f"📸 Snapshot {r.snapshot} do sistema criado antes da mudança",
                       "ok", "dá para desfazer pelo Gerenciador de snapshots")

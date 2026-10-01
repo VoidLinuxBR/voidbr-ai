@@ -9,6 +9,12 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.3.7 (2026-09-30): senha das ações em qualquer ambiente: usa o agente do
+#     polkit rodando; se houver um instalado e parado, inicia sozinho; sem nenhum, a
+#     própria janela pede a senha (pkexec num terminal simulado, sem eco, nada gravado)
+#     e oferece instalar o polkit-gnome e iniciá-lo com a sessão (autostart/exec-once).
+#   - v0.3.6 (2026-09-30): não tenta mais adivinhar o agente do polkit pelo nome do
+#     processo (dava "nenhum agente" com agente rodando); quem decide é o pkexec.
 #   - v0.3.5 (2026-09-30): GUI: a senha das ações vem só do agente gráfico do polkit
 #     (antes, aberta pelo terminal, ficava parada em "Executando…" pedindo a senha lá);
 #     sem agente, avisa na hora em vez de travar.

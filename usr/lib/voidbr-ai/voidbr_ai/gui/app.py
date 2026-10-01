@@ -51,7 +51,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk, Pango  # noqa: E402
 
 from .. import APP_NAME, APP_VERSION, config, history, setup, tools  # noqa: E402
-from ..agent import Agent  # noqa: E402
+from ..agent import Agent, Report  # noqa: E402
 
 APP_ID = "br.voidbr.ai"
 
@@ -1179,6 +1179,8 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
                     self._botoes_acao.remove(b)
         if r.snapshot:
             self.cartao_snapshot(r.snapshot)
+        if r.sem_agente:
+            self.cartao_agente()
         if not r.ok:
             self.erro("O comando falhou", r.output or "sem saída")
             return False
@@ -1193,6 +1195,75 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             linha.append(self._label(f"{icone}  <b>{esc(r.check)}</b>"))
             self.adicionar(linha)
         return False
+
+    def pedir_senha(self, texto):
+        """Chamada na thread da ação quando não há agente do polkit: mostra uma janela de
+        senha e espera a resposta. A senha só vai para o pkexec; nunca é gravada."""
+        pronto = threading.Event()
+        res = {"senha": None}
+
+        def mostrar():
+            dlg = Gtk.Window(title="Senha de administrador", transient_for=self, modal=True,
+                             default_width=460, resizable=False)
+            caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18,
+                            margin_bottom=18, margin_start=18, margin_end=18)
+            caixa.append(self._label(f"🔐  <b>{esc(texto)}</b>", selecionavel=False))
+            caixa.append(self._label("<small>Não há agente do polkit rodando, então o próprio "
+                                     "VoidBR AI pede a senha. Ela vai direto para o pkexec e não "
+                                     "é gravada.</small>", "detalhe", False))
+            entrada = Gtk.PasswordEntry(show_peek_icon=True, activates_default=True)
+            caixa.append(entrada)
+            linha = Gtk.Box(spacing=8, homogeneous=True)
+
+            def fim(senha):
+                if pronto.is_set():
+                    return
+                res["senha"] = senha
+                pronto.set()
+                dlg.close()
+
+            cancelar = self._botao("❌ Cancelar", "botao-cinza", lambda *_: fim(None))
+            ok = self._botao("🔓 Autenticar", "botao-verde", lambda *_: fim(entrada.get_text()))
+            linha.append(cancelar)
+            linha.append(ok)
+            caixa.append(linha)
+            entrada.connect("activate", lambda *_: fim(entrada.get_text()))
+            dlg.connect("close-request", lambda *_: (fim(None), False)[1])
+            dlg.set_child(caixa)
+            dlg.present()
+            entrada.grab_focus()
+            return False
+
+        GLib.idle_add(mostrar)
+        pronto.wait()
+        return res["senha"]
+
+    def cartao_agente(self):
+        """A senha foi pedida pela janela porque não há agente do polkit: oferece resolver."""
+        from ..tools import privileged
+        acoes = []
+        reg = self.agent.registry
+        if not privileged.agente_instalado():
+            try:
+                acoes.append(reg.make_action("pkg.install", {"packages": [privileged.AGENTE_PADRAO[1]]},
+                                             reason="agente que pede a senha das ações"))
+            except ValueError:
+                pass
+        try:
+            acoes.append(reg.make_action("polkit.autostart", {}, reason="iniciar junto com a sessão"))
+        except ValueError:
+            pass
+        rep = Report(question="agente do polkit", domain="system", actions=acoes)
+        c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        c.add_css_class("cartao")
+        c.add_css_class("cartao-aviso")
+        c.append(self._label("🔐  <b>Não há agente do polkit rodando</b>\n<small>Por isso o VoidBR "
+                             "AI pediu a senha na própria janela. Com um agente, outros programas "
+                             "também conseguem pedir a senha" + (": instale o polkit-gnome e deixe-o "
+                             "iniciar com a sessão." if not privileged.agente_instalado() else
+                             ": deixe-o iniciar com a sessão.") + "</small>"))
+        self._acoes(c, rep)
+        self.adicionar(c)
 
     def cartao_snapshot(self, num):
         """Snapshot criado antes da ação: oferece desfazer pelo voidbr-snapper-manager."""
@@ -1686,6 +1757,8 @@ class AppVoidbrAI(Gtk.Application):
 
     def do_activate(self):
         janela = self.props.active_window or JanelaVoidbrAI(self)
+        from ..tools import privileged
+        privileged.PEDIR_SENHA = janela.pedir_senha
         janela.present()
 
 
@@ -1701,7 +1774,8 @@ def main():
         sys.argv = [a for a in sys.argv if a != "--reset-font"]
     cfg = config.load()
     history.setup_logging(cfg.get("log", {}).get("level", "info"))
-    # a senha das ações vem do agente gráfico do polkit, nunca do terminal
+    # a senha das ações vem do agente gráfico do polkit (ou, sem agente, da própria
+    # janela do app), nunca do terminal
     from ..tools import privileged
     privileged.SEM_TERMINAL = True
     app = AppVoidbrAI()

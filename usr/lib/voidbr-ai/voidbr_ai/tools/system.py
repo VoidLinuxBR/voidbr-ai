@@ -40,6 +40,54 @@ def _v_group(group):
                 else f"{usuario} não entrou no grupo {group}")
 
 
+def a_polkit_autostart(on_line=None):
+    """Faz o agente do polkit iniciar com a sessão (XDG autostart e, no Hyprland, exec-once)
+    e já o inicia agora. Só mexe em arquivos do usuário."""
+    from . import privileged
+    caminho = privileged.agente_instalado()
+    if not caminho:
+        return {"ok": False, "rc": 1, "out": "nenhum agente do polkit instalado (instale o polkit-gnome)",
+                "err": "", "cancelled": False}
+    feito = []
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    auto = os.path.join(base, "autostart", "voidbr-polkit-agent.desktop")
+    try:
+        os.makedirs(os.path.dirname(auto), exist_ok=True)
+        with open(auto, "w", encoding="utf-8") as f:
+            f.write("[Desktop Entry]\nType=Application\nName=Agente do polkit (VoidBR AI)\n"
+                    f"Exec={caminho}\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n")
+        feito.append(f"criado {auto}")
+        hypr = os.path.join(base, "hypr", "hyprland.conf")
+        if os.path.isfile(hypr):
+            with open(hypr, encoding="utf-8", errors="replace") as f:
+                texto = f.read()
+            if caminho not in texto:
+                with open(hypr + ".voidbr-ai.bak", "w", encoding="utf-8") as f:
+                    f.write(texto)
+                with open(hypr, "a", encoding="utf-8") as f:
+                    f.write(f"\n# VoidBR AI: agente do polkit (pede a senha das ações)\nexec-once = {caminho}\n")
+                feito.append(f"exec-once adicionado em {hypr} (cópia em {hypr}.voidbr-ai.bak)")
+    except OSError as e:
+        return {"ok": False, "rc": 1, "out": str(e), "err": str(e), "cancelled": False}
+    privileged.iniciar_agente()
+    feito.append(f"agente iniciado: {caminho}")
+    if on_line:
+        for l in feito:
+            on_line(l)
+    return {"ok": True, "rc": 0, "out": "\n".join(feito), "err": "", "cancelled": False}
+
+
+def _v_polkit_autostart():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    ok = os.path.isfile(os.path.join(base, "autostart", "voidbr-polkit-agent.desktop"))
+    return ok, ("o agente do polkit vai iniciar com a sessão" if ok else "o início automático não foi criado")
+
+
+def _c_polkit(args):
+    from . import privileged
+    return None if privileged.agente_instalado() else "nenhum agente do polkit instalado (instale o polkit-gnome)"
+
+
 def _c_group(args):
     try:
         grp.getgrnam(args["group"])
@@ -265,6 +313,13 @@ def analyze(state, reg):
 
 
 def register(reg):
+    reg.register(Tool("polkit.autostart", "Iniciar o agente de senha com a sessão",
+                      "Faz o agente do polkit (a janela que pede a senha das ações) iniciar junto com "
+                      "a sessão: XDG autostart e, no Hyprland, exec-once no hyprland.conf.",
+                      a_polkit_autostart, kind="action", domain="system", root=False,
+                      check=_c_polkit, title="Iniciar o agente de senha (polkit) com a sessão",
+                      preview=lambda: "~/.config/autostart/voidbr-polkit-agent.desktop (+ exec-once no Hyprland)",
+                      verify=_v_polkit_autostart))
     reg.register(Tool("user.add_group", "Adicionar você a um grupo",
                       "Adiciona o usuário atual a um grupo do sistema (audio, video, render, input, "
                       "bluetooth, socklog, _seatd, network, plugdev, lpadmin). Vale no próximo login.",

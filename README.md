@@ -190,9 +190,12 @@ git clone https://github.com/voidlinuxbr/voidbr-ai.git
 cd voidbr-ai/pkgfile && pkgmake
 ```
 
-Para as ações na janela, tenha um agente gráfico do polkit rodando (no Hyprland:
-`hyprpolkitagent`, iniciado com `exec-once` no `hyprland.conf`). Sem ele a janela avisa e
-nada é executado; pelo terminal (`voidbr-ai`) a senha é pedida no próprio terminal.
+Senha das ações (pkexec), em qualquer ambiente: usa o agente do polkit que estiver
+rodando; se houver um instalado e parado (polkit-gnome, xfce-polkit, lxqt-policykit,
+mate-polkit, hyprpolkitagent…), o app o inicia sozinho; sem nenhum, a própria janela pede
+a senha (ela vai direto para o pkexec, sem eco e sem ser gravada) e oferece instalar o
+`polkit-gnome` e iniciá-lo com a sessão (XDG autostart e `exec-once` no Hyprland).
+Pelo terminal (`voidbr-ai`) a senha é pedida no próprio terminal.
 
 ## Estender
 
