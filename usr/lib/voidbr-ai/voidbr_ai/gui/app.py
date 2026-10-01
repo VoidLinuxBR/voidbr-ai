@@ -171,9 +171,6 @@ button:disabled {
     border: 1px solid #4b4e66;
 }
 .botao-fonte label { color: #f1f1f1; }
-fontbutton.botao-fonte { background: none; border: none; padding: 0; }
-fontbutton.botao-fonte > button { background: #3b3d52; border: 1px solid #4b4e66; }
-fontbutton.botao-fonte > button label { color: #f1f1f1; }
 .botao-fonte:hover { background: #4b4e66; }
 .botao-fonte:disabled { background: #2a2b3a; }
 .botao-fonte:disabled label { color: #6b7280; }
@@ -499,79 +496,93 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             f".saida {{ font-size: {11 * s:.0f}px; }}\n"
             # código, comandos e saída continuam monoespaçados
             ".saida, .codigo, .monospace, .monospace text, textview.monospace, "
-            "textview.monospace text { font-family: monospace; }\n").encode("utf-8"))
+            "textview.monospace text { font-family: monospace; }\n"
+            # a janela Aparência fica sempre na fonte do sistema (para dar para desfazer)
+            f"window.aparencia, window.aparencia * {{ font-family: \"{_familia_segura(re.sub(r'[ ,]*[0-9.]+$', '', nome)) or 'sans-serif'}\"; "
+            f"font-size: {base:.1f}pt; }}\n"
+            "window.aparencia .titulo-app { font-size: 20px; }\n").encode("utf-8"))
+        # força o GTK a remedir e redesenhar todas as janelas com a fonte nova
+        # (no Hyprland a janela podia ficar meio desenhada, sem a parte de baixo)
+        for w in Gtk.Window.list_toplevels():
+            w.queue_resize()
+            w.queue_draw()
         self.b_escala.set_label(f"{round(s * 100)}%")
         self.b_menor.set_sensitive(s > ESCALA_MIN + 0.001)
         self.b_maior.set_sensitive(s < ESCALA_MAX - 0.001)
 
     def ao_clicar_aparencia(self, *_):
-        """Escolhe a família da fonte da interface (o tamanho fica no A− / A+)."""
-        anterior = self.familia
-        dlg = Gtk.Window(title="Aparência", transient_for=self, modal=True, default_width=520)
+        """Escolhe a família da fonte da interface (o tamanho fica no A− / A+).
+
+        A escolha só aparece na frase de exemplo; a interface muda quando você salva
+        (assim a janela não se desmonta enquanto você escolhe)."""
+        sistema = Gtk.Settings.get_default().props.gtk_font_name or "Sans 11"
+        familias = sorted({f.get_name() for f in self.get_pango_context().list_families()},
+                          key=str.lower)
+        opcoes = ["Padrão do sistema"] + familias
+        escolha = [self.familia]
+
+        dlg = Gtk.Window(title="Aparência", transient_for=self, modal=True,
+                         default_width=560, resizable=False)
+        dlg.add_css_class("aparencia")
         caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                         margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
         titulo = Gtk.Label(label="🔤 Aparência", xalign=0)
         titulo.add_css_class("titulo-app")
         caixa.append(titulo)
-        caixa.append(self._label("Fonte da interface. O tamanho continua nos botões A− / A+ "
-                                 "(Ctrl +, Ctrl -, Ctrl 0). Código e comandos ficam em fonte "
-                                 "monoespaçada.", "detalhe", False))
-        sistema = Gtk.Settings.get_default().props.gtk_font_name or "Sans 11"
-        fd = Gtk.FontDialog(title="Escolha a fonte")
-        botao = Gtk.FontDialogButton(dialog=fd, level=Gtk.FontLevel.FAMILY, hexpand=True)
-        botao.add_css_class("botao-fonte")
-        botao.set_font_desc(Pango.FontDescription.from_string(self.familia or sistema))
+        caixa.append(self._label("Fonte da interface (o tamanho continua nos botões A− / A+). "
+                                 "Escolha olhando o exemplo e clique em Salvar. Código e "
+                                 "comandos ficam em fonte monoespaçada.", "detalhe", False))
+
+        lista = Gtk.DropDown.new_from_strings(opcoes)
+        lista.set_enable_search(True)
+        lista.set_expression(Gtk.PropertyExpression.new(Gtk.StringObject, None, "string"))
+        lista.set_hexpand(True)
+        lista.set_selected(opcoes.index(self.familia) if self.familia in opcoes else 0)
         linha = Gtk.Box(spacing=8)
         linha.append(Gtk.Label(label="Fonte:", xalign=0))
-        linha.append(botao)
+        linha.append(lista)
         caixa.append(linha)
-        previa = self._label("Exemplo: <b>Minha rede não funciona.</b> O gateway responde, "
-                             "mas o DNS falha. 0123456789 áéíóú çãõ", "cartao")
-        caixa.append(previa)
+
+        # exemplo com a fonte escolhida (só este rótulo muda)
+        previa = Gtk.Label(label="Minha rede não funciona. O gateway responde, mas o DNS falha.\n"
+                                 "0123456789  áéíóú çãõ  ABC abc", xalign=0, wrap=True,
+                           max_width_chars=60, height_request=64, hexpand=True)
+        previa.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        quadro = Gtk.Box()
+        quadro.add_css_class("cartao")
+        quadro.append(previa)
+        caixa.append(quadro)
         info = self._label("", "detalhe", False)
         caixa.append(info)
 
-        def mostrar_atual():
-            info.set_markup(f"Em uso: <b>{esc(self.familia or 'padrão do sistema')}</b>"
-                            + ("" if self.familia else f" ({esc(sistema)})"))
-
         def ao_mudar(*_):
-            desc = botao.get_font_desc()
-            self.familia = _familia_segura(desc.get_family() if desc else "")
-            self.aplicar_fonte()          # prévia ao vivo
-            mostrar_atual()
-        botao.connect("notify::font-desc", ao_mudar)
-        mostrar_atual()
-
-        def padrao(*_):
-            self.familia = ""
-            self.aplicar_fonte()
-            mostrar_atual()
-
-        salvo = [False]
-
-        def ao_fechar(*_):
-            if not salvo[0]:            # fechou sem salvar: volta a fonte de antes
-                self.familia = anterior
-                self.aplicar_fonte()
-            return False
+            i = lista.get_selected()
+            fam = "" if i in (0, Gtk.INVALID_LIST_POSITION) else _familia_segura(opcoes[i])
+            escolha[0] = fam
+            attrs = Pango.AttrList()
+            if fam:
+                attrs.insert(Pango.attr_family_new(fam))
+            previa.set_attributes(attrs)
+            info.set_markup(f"Em uso agora: <b>{esc(self.familia or 'padrão do sistema')}</b>"
+                            + ("" if self.familia else f" ({esc(sistema)})"))
+        lista.connect("notify::selected", ao_mudar)
+        ao_mudar()
 
         def salvar(*_):
             try:
-                config.save_user({"gui": {"font_family": self.familia}})
+                config.save_user({"gui": {"font_family": escolha[0]}})
             except OSError as e:
                 self.erro("Não foi possível salvar", str(e))
                 return
-            salvo[0] = True
+            self.familia = escolha[0]
+            self.aplicar_fonte()
             dlg.close()
 
         botoes = Gtk.Box(spacing=8, homogeneous=True)
-        botoes.append(self._botao("↺ Padrão do sistema", "botao-laranja", padrao))
         botoes.append(self._botao("❌ Cancelar", "botao-cinza", lambda *_: dlg.close()))
         botoes.append(self._botao("💾 Salvar", "botao-verde", salvar))
         caixa.append(botoes)
         dlg.set_child(caixa)
-        dlg.connect("close-request", ao_fechar)
         dlg.present()
 
     def mudar_fonte(self, passo):
@@ -1683,6 +1694,11 @@ def main():
     if rodando_como_root():
         print(f"voidbr-ai-gui: {ROOT_MSG}", file=sys.stderr)
         return 1
+    if "--reset-font" in sys.argv[1:]:
+        # escape caso uma fonte deixe a janela ilegível
+        config.save_user({"gui": {"font_family": "", "font_scale": 1.0}})
+        print("voidbr-ai-gui: fonte voltou ao padrão do sistema")
+        sys.argv = [a for a in sys.argv if a != "--reset-font"]
     cfg = config.load()
     history.setup_logging(cfg.get("log", {}).get("level", "info"))
     app = AppVoidbrAI()

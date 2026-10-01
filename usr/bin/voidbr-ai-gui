@@ -9,6 +9,9 @@
 #   Licença: MIT
 #
 #   ChangeLog:
+#   - v0.3.3 (2026-09-30): Aparência: a fonte escolhida aparece só no exemplo e a
+#     interface muda ao salvar (antes a janela se desmontava e sumiam os botões);
+#     a janela Aparência fica sempre na fonte do sistema; voidbr-ai-gui --reset-font.
 #   - v0.3.2 (2026-09-30): escolha da fonte da interface (☰ → Aparência), com prévia
 #     ao vivo; código e comandos continuam monoespaçados.
 #   - v0.3.1 (2026-09-30): diagnóstico de impressora (CUPS): detecta impressoras USB e

@@ -70,8 +70,9 @@ pedem a senha na hora (pkexec).
   Brother, Epson, Canon…), reativa impressora pausada, limpa a fila, define a padrão e imprime
   a página de teste.
 - **Fonte da interface:** tamanho nos botões **A− / 100% / A+** da barra de título (ou Ctrl +,
-  Ctrl -, Ctrl 0) e a família em ☰ → 🔤 Aparência, com prévia ao vivo. Ficam gravados em
-  `[gui] font_scale` e `font_family`; código e comandos continuam monoespaçados.
+  Ctrl -, Ctrl 0) e a família em ☰ → 🔤 Aparência (com exemplo; muda ao salvar). Ficam
+  gravados em `[gui] font_scale` e `font_family`; código e comandos continuam monoespaçados.
+  Se uma fonte deixar a janela ilegível: `voidbr-ai-gui --reset-font`.
 - **Documentação local:** trechos do Void Handbook e das ferramentas do VoidBR (vinstall,
   vservice, pkgmake) em `/usr/share/voidbr-ai/kb/`. A IA recebe os trechos relevantes
   (e erra menos com modelos pequenos); sem IA eles são mostrados direto.
