@@ -2,7 +2,7 @@
 
 pkgname=voidbr-ai
 pkgdesc="VoidBR AI - assistente do sistema: investiga a máquina real, explica e corrige com confirmação (GTK4 + CLI)"
-pkgver=0.3.1   # = APP_VERSION (usr/lib/voidbr-ai/voidbr_ai/__init__.py); atualizar a cada release
+pkgver=0.3.2   # = APP_VERSION (usr/lib/voidbr-ai/voidbr_ai/__init__.py); atualizar a cada release
 pkgrel=1
 arch=('any')
 license=('MIT')

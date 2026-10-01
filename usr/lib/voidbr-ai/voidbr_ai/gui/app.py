@@ -65,6 +65,11 @@ OPENAI_URL = "https://api.openai.com/v1"
 
 ESCALA_MIN, ESCALA_MAX = 0.7, 2.0     # tamanho da fonte: 70% a 200%
 
+
+def _familia_segura(nome):
+    """Nome de fonte para o CSS (sem aspas/chaves que quebrem a regra)."""
+    return re.sub(r'[^\w .,+-]', "", str(nome or "")).strip()[:80]
+
 ICONE_PASSO = {"ok": "✅", "warn": "⚠️", "fail": "❌", "info": "•", "running": "⏳"}
 ICONE_ACHADO = {"erro": "❌", "aviso": "⚠️", "info": "ℹ️", "ok": "✅"}
 
@@ -166,6 +171,9 @@ button:disabled {
     border: 1px solid #4b4e66;
 }
 .botao-fonte label { color: #f1f1f1; }
+fontbutton.botao-fonte { background: none; border: none; padding: 0; }
+fontbutton.botao-fonte > button { background: #3b3d52; border: 1px solid #4b4e66; }
+fontbutton.botao-fonte > button label { color: #f1f1f1; }
 .botao-fonte:hover { background: #4b4e66; }
 .botao-fonte:disabled { background: #2a2b3a; }
 .botao-fonte:disabled label { color: #6b7280; }
@@ -361,6 +369,7 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
             self.escala = min(ESCALA_MAX, max(ESCALA_MIN, float(g.get("font_scale", 1.0))))
         except (TypeError, ValueError):
             self.escala = 1.0
+        self.familia = _familia_segura(g.get("font_family", ""))
 
         # --- Barra de título com menu ---
         cabecalho = Gtk.HeaderBar()
@@ -384,6 +393,7 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         menu.append("📋 Explicar comando ou erro…", "win.explicar")
         menu.append("🗂️ Histórico", "win.historico")
         menu.append("🔔 Avisos em segundo plano…", "win.avisos")
+        menu.append("🔤 Aparência (fonte)…", "win.aparencia")
         menu.append("🧰 Ferramentas disponíveis", "win.ferramentas")
         menu.append("ℹ️ Sobre / Créditos", "win.sobre")
         botao_menu = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
@@ -398,6 +408,7 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
                          ("historico", self.ao_clicar_historico),
                          ("explicar", self.ao_clicar_explicar),
                          ("avisos", self.ao_clicar_avisos),
+                         ("aparencia", self.ao_clicar_aparencia),
                          ("ferramentas", self.ao_clicar_ferramentas),
                          ("sobre", self.ao_clicar_sobre),
                          ("fonte_mais", lambda *_: self.mudar_fonte(1)),
@@ -481,13 +492,87 @@ class JanelaVoidbrAI(Gtk.ApplicationWindow):
         m = re.search(r"(\d+(?:\.\d+)?)\s*$", nome)
         base = float(m.group(1)) if m else 11.0
         s = self.escala
+        fam = f' font-family: "{self.familia}";' if self.familia else ""
         self.css_fonte.load_from_data((
-            f"window, window * {{ font-size: {base * s:.1f}pt; }}\n"
+            f"window, window * {{ font-size: {base * s:.1f}pt;{fam} }}\n"
             f".titulo-app {{ font-size: {20 * s:.0f}px; }}\n"
-            f".saida {{ font-size: {11 * s:.0f}px; }}\n").encode("utf-8"))
+            f".saida {{ font-size: {11 * s:.0f}px; }}\n"
+            # código, comandos e saída continuam monoespaçados
+            ".saida, .codigo, .monospace, .monospace text, textview.monospace, "
+            "textview.monospace text { font-family: monospace; }\n").encode("utf-8"))
         self.b_escala.set_label(f"{round(s * 100)}%")
         self.b_menor.set_sensitive(s > ESCALA_MIN + 0.001)
         self.b_maior.set_sensitive(s < ESCALA_MAX - 0.001)
+
+    def ao_clicar_aparencia(self, *_):
+        """Escolhe a família da fonte da interface (o tamanho fica no A− / A+)."""
+        anterior = self.familia
+        dlg = Gtk.Window(title="Aparência", transient_for=self, modal=True, default_width=520)
+        caixa = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                        margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+        titulo = Gtk.Label(label="🔤 Aparência", xalign=0)
+        titulo.add_css_class("titulo-app")
+        caixa.append(titulo)
+        caixa.append(self._label("Fonte da interface. O tamanho continua nos botões A− / A+ "
+                                 "(Ctrl +, Ctrl -, Ctrl 0). Código e comandos ficam em fonte "
+                                 "monoespaçada.", "detalhe", False))
+        sistema = Gtk.Settings.get_default().props.gtk_font_name or "Sans 11"
+        fd = Gtk.FontDialog(title="Escolha a fonte")
+        botao = Gtk.FontDialogButton(dialog=fd, level=Gtk.FontLevel.FAMILY, hexpand=True)
+        botao.add_css_class("botao-fonte")
+        botao.set_font_desc(Pango.FontDescription.from_string(self.familia or sistema))
+        linha = Gtk.Box(spacing=8)
+        linha.append(Gtk.Label(label="Fonte:", xalign=0))
+        linha.append(botao)
+        caixa.append(linha)
+        previa = self._label("Exemplo: <b>Minha rede não funciona.</b> O gateway responde, "
+                             "mas o DNS falha. 0123456789 áéíóú çãõ", "cartao")
+        caixa.append(previa)
+        info = self._label("", "detalhe", False)
+        caixa.append(info)
+
+        def mostrar_atual():
+            info.set_markup(f"Em uso: <b>{esc(self.familia or 'padrão do sistema')}</b>"
+                            + ("" if self.familia else f" ({esc(sistema)})"))
+
+        def ao_mudar(*_):
+            desc = botao.get_font_desc()
+            self.familia = _familia_segura(desc.get_family() if desc else "")
+            self.aplicar_fonte()          # prévia ao vivo
+            mostrar_atual()
+        botao.connect("notify::font-desc", ao_mudar)
+        mostrar_atual()
+
+        def padrao(*_):
+            self.familia = ""
+            self.aplicar_fonte()
+            mostrar_atual()
+
+        salvo = [False]
+
+        def ao_fechar(*_):
+            if not salvo[0]:            # fechou sem salvar: volta a fonte de antes
+                self.familia = anterior
+                self.aplicar_fonte()
+            return False
+
+        def salvar(*_):
+            try:
+                config.save_user({"gui": {"font_family": self.familia}})
+            except OSError as e:
+                self.erro("Não foi possível salvar", str(e))
+                return
+            salvo[0] = True
+            dlg.close()
+
+        botoes = Gtk.Box(spacing=8, homogeneous=True)
+        botoes.append(self._botao("↺ Padrão do sistema", "botao-laranja", padrao))
+        botoes.append(self._botao("❌ Cancelar", "botao-cinza", lambda *_: dlg.close()))
+        botoes.append(self._botao("💾 Salvar", "botao-verde", salvar))
+        caixa.append(botoes)
+        dlg.set_child(caixa)
+        dlg.connect("close-request", ao_fechar)
+        dlg.present()
 
     def mudar_fonte(self, passo):
         """passo: +1 aumenta, -1 diminui, 0 volta ao normal. Fica gravado na configuração."""
